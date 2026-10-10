@@ -1,4 +1,4 @@
-/* Schwerin News Card v1.0 — Home Assistant custom card, no dependencies */
+/* Schwerin News Card v1.1.0 — direct RSS loading (CORS required) */
 class SchwerinNewsCard extends HTMLElement {
   constructor() {
     super();
@@ -8,29 +8,114 @@ class SchwerinNewsCard extends HTMLElement {
     this._category = 'Alle Themen';
     this._search = '';
     this._lastSignature = null;
+    this._news = [];
+    this._status = "loading";
+    this._error = "";
+    this._timer = null;
+    this._requestId = 0;
   }
 
   setConfig(config) {
-    if (!config.entity) throw new Error('Bitte entity festlegen, z. B. sensor.schwerin_pressemitteilungen');
     this._config = {
       title: 'Schwerin – Pressemitteilungen',
       max_items: 10,
       default_open: false,
+      refresh_minutes: 30,
+      feed_url: '',
+      page_url: 'https://www.schwerin.de/politik-verwaltung/stadtverwaltung/pressestelle/pressemitteilungen/',
       ...config,
     };
     this._expanded = Boolean(this._config.default_open);
-    this._lastSignature = null;
+    this._news = [];
+    this._status = 'loading';
+    this._error = '';
+    this._render();
+    if (this.isConnected) this._start();
+  }
+
+  set hass(value) { this._hass = value; }
+  connectedCallback() { if (this._config) this._start(); }
+  disconnectedCallback() {
+    if (this._timer) clearInterval(this._timer);
+    this._timer = null;
+    this._requestId++;
+  }
+  _start() {
+    if (this._timer) clearInterval(this._timer);
+    this._load();
+    const mins = Math.max(5, Number(this._config.refresh_minutes) || 30);
+    this._timer = setInterval(() => this._load(), mins * 60000);
+  }
+
+  async _load() {
+    const id = ++this._requestId;
+    try {
+      let feed = this._config.feed_url;
+      if (!feed) {
+        const page = await this._fetchText(this._config.page_url);
+        const dom = new DOMParser().parseFromString(page, 'text/html');
+        const links = Array.from(dom.querySelectorAll('a[href], link[href]'));
+        const found = links.find(el =>
+          /rss|pressemitteilungen abonnieren/i.test(
+            [el.getAttribute('href'),el.getAttribute('type'),el.textContent].join(' ')
+          )
+        );
+        if (!found) throw new Error('Kein RSS-Link auf der Pressemitteilungsseite gefunden. Bitte feed_url in der Karte hinterlegen.');
+        feed = new URL(found.getAttribute('href'), this._config.page_url).href;
+      }
+      const text = await this._fetchText(feed);
+      const news = this._parseFeed(text, feed);
+      if (!news.length) throw new Error('Feed enthält keine lesbaren Meldungen.');
+      if (id !== this._requestId || !this.isConnected) return;
+      this._news = news;
+      this._status = 'ok';
+      this._error = '';
+      this._feed = feed;
+    } catch (err) {
+      if (id !== this._requestId || !this.isConnected) return;
+      this._status = this._news.length ? 'stale' : 'error';
+      this._error = String(err?.message || err) + ' – Falls der Browser „Failed to fetch“ meldet, kann CORS die Ursache sein.';
+    }
     this._render();
   }
 
-  set hass(value) {
-    this._hass = value;
-    const entity = value?.states?.[this._config?.entity];
-    const signature = JSON.stringify({state: entity?.state, items: entity?.attributes?.items, today: this._dateKey(new Date())});
-    if (signature !== this._lastSignature) {
-      this._lastSignature = signature;
-      this._render();
-    }
+  async _fetchText(url) {
+    const parsed = new URL(url, this._config.page_url);
+    if (parsed.protocol !== 'https:') throw new Error('Nur HTTPS-Quellen sind erlaubt.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(parsed.href, {signal:controller.signal, credentials:'omit'});
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${parsed.hostname}`);
+      return await response.text();
+    } finally { clearTimeout(timeout); }
+  }
+
+  _parseFeed(xml, base) {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('Ungültiger RSS-/Atom-Feed.');
+    const entries = Array.from(doc.querySelectorAll('item, entry'));
+    const get = (node, tag) => {
+      const child = Array.from(node.children).find(el => el.localName === tag);
+      return child?.textContent?.trim() || '';
+    };
+    const clean = value => {
+      const fragment = new DOMParser().parseFromString(value || '', 'text/html');
+      return (fragment.body.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
+    };
+    const items = entries.map(el => {
+      const title = get(el,'title');
+      const linkTag = Array.from(el.children).find(x => x.localName === 'link' && (!x.getAttribute('rel') || x.getAttribute('rel') === 'alternate'));
+      const link = linkTag?.getAttribute('href') || get(el,'link');
+      const dateRaw = get(el,'pubDate') || get(el,'published') || get(el,'updated') || get(el,'date');
+      const parsed = new Date(dateRaw);
+      const date = Number.isNaN(parsed.valueOf()) ? '' : `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
+      let url = '';
+      try { const u = new URL(link, base); if (u.protocol === 'https:') url = u.href; } catch {}
+      const description = clean(get(el,'description') || get(el,'summary') || get(el,'encoded') || get(el,'content'));
+      return {title, url, date, description, category:get(el,'category')};
+    }).filter(x => x.title && x.url);
+    return items.sort((a,b) => b.date.localeCompare(a.date)).slice(0,100);
   }
 
   getCardSize() { return this._expanded ? 7 : 2; }
@@ -56,6 +141,12 @@ class SchwerinNewsCard extends HTMLElement {
   }
 
   _topic(item) {
+    const official = String(item.category || '').toLocaleLowerCase('de');
+    if (/verkehr|ordnung|sicherheit/.test(official)) return 'Verkehr';
+    if (/bildung|schule|jugend|familie/.test(official)) return 'Bildung';
+    if (/politik|verwaltung/.test(official)) return 'Politik & Verwaltung';
+    if (/kultur|veranstaltung/.test(official)) return 'Kultur & Veranstaltungen';
+    if (/bau|stadtentwicklung|wohnen/.test(official)) return 'Bauen & Stadtentwicklung';
     const text = `${item.title || ''} ${item.description || ''}`.toLocaleLowerCase('de');
     const groups = [
       ['Verkehr', /verkehr|baustell|straßen|strassen|sperrung|bus|bahn|parkpl[aä]tz|radweg|br[uü]ck/],
@@ -76,8 +167,7 @@ class SchwerinNewsCard extends HTMLElement {
 
   _items() {
     const entity = this._hass?.states?.[this._config?.entity];
-    const data = entity?.attributes?.items;
-    return Array.isArray(data) ? data.filter(x => x && typeof x === 'object') : [];
+    return this._news;
   }
 
   _render() {
@@ -110,7 +200,6 @@ class SchwerinNewsCard extends HTMLElement {
     const card = this._el('ha-card');
     root.append(card);
     const items = this._items();
-    const entity = this._hass?.states?.[this._config.entity];
     const today = this._dateKey(new Date());
     const todayCount = items.filter(item => {const date=this._parseDate(item.date);return date && this._dateKey(date)===today;}).length;
     const header = this._el('button', 'header');
@@ -119,9 +208,9 @@ class SchwerinNewsCard extends HTMLElement {
     const headingBox = this._el('div');
     headingBox.append(this._el('div', 'heading', this._config.title));
     let sub;
-    if (!entity) sub = 'Sensor nicht gefunden';
-    else if (entity.state !== 'ok') sub = 'Nachrichtenquelle derzeit nicht verfügbar';
-    else sub = `${todayCount} ${todayCount === 1 ? 'Meldung' : 'Meldungen'} heute · ${items.length} geladen`;
+    if (this._status === 'loading') sub = 'Lade Nachrichten …';
+    else if (this._status === 'error') sub = 'Nachrichtenquelle nicht erreichbar';
+    else sub = `${todayCount} ${todayCount === 1 ? 'Meldung' : 'Meldungen'} heute · ${items.length} geladen${this._status === 'stale' ? ' · Daten möglicherweise veraltet' : ''}`;
     headingBox.append(this._el('div','sub',sub));
     header.append(headingBox, this._el('span','arrow', this._expanded ? '▴' : '▾'));
     header.addEventListener('click', () => { this._expanded = !this._expanded; this._render(); });
@@ -129,10 +218,11 @@ class SchwerinNewsCard extends HTMLElement {
     if (!this._expanded) return;
     const body = this._el('div','body');
     card.append(body);
-    if (!entity || entity.state !== 'ok') {
-      body.append(this._el('div','notice',entity?.attributes?.error || 'Bitte Sensorstatus und RSS-Abruf kontrollieren.'));
+    if (this._status === 'error' || this._status === 'loading') {
+      body.append(this._el('div','notice',this._status === 'loading' ? 'RSS-Feed wird geladen …' : this._error));
       return;
     }
+    if (this._status === 'stale') body.append(this._el('div','notice',this._error));
     const filters = this._el('div','filters');
     body.append(filters);
     const period = this._el('select');
@@ -188,7 +278,7 @@ class SchwerinNewsCard extends HTMLElement {
       entry.append(this._el('div','desc',item.description || 'Keine Kurzbeschreibung verfügbar.'));
       list.append(entry);
     }
-    footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} im Sensor geladen`;
+    footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} aus RSS geladen`;
   }
 }
 if (!customElements.get('schwerin-news-card')) customElements.define('schwerin-news-card', SchwerinNewsCard);
