@@ -2,6 +2,15 @@
 
 Eigenstaendige Home-Assistant-Dashboard-Karte fuer Pressemitteilungen der Landeshauptstadt Schwerin. Die Karte laeuft komplett im Browser: keine Backend-Integration, kein Python-Skript, keine Home-Assistant-Helfer und kein externer Proxy.
 
+## Einrichtung über den visuellen Editor
+
+1. Karte über HACS installieren.
+2. Dashboard bearbeiten und eine Karte hinzufügen.
+3. `Schwerin News Card` auswählen.
+4. Einstellungen im visuellen Editor konfigurieren und speichern.
+
+Die Karte kann ohne Entitätsauswahl hinzugefügt werden. Der visuelle Editor verwendet die native Home-Assistant-Formularschnittstelle. Die manuelle YAML-Konfiguration bleibt als Alternative verfügbar.
+
 ## Installation ueber HACS
 
 1. Dieses Repository als HACS-Dashboard-Repository verwenden.
@@ -30,6 +39,11 @@ Optionale Felder:
 | `list_max_height` | `400` | Maximale Höhe der Nachrichtenliste in CSS-Pixeln; bei längeren Listen wird innerhalb der Karte gescrollt |
 | `page_url` | offizielle Pressemitteilungsseite | HTML-Quelle fuer direkte Browserabfrage |
 | `feed_url` | leer | Optionaler RSS-/Atom-Feed als bevorzugte Quelle |
+| `show_filters` | `true` | Filter und Stichwortsuche anzeigen |
+| `highlight_today` | `true` | Meldungen des aktuellen Tages hervorheben |
+| `show_today_count` | `true` | Tageszähler im Kartenkopf anzeigen |
+| `default_period` | `Alle` | Vorausgewählter Zeitraum |
+| `default_category` | `Alle Themen` | Vorausgewähltes Thema, falls verfügbar |
 
 ## Verhalten
 

@@ -3,16 +3,21 @@
   'use strict';
 
   const DEFAULT_PAGE_URL = 'https://www.schwerin.de/politik-verwaltung/stadtverwaltung/pressestelle/pressemitteilungen/';
+  const ALL_TOPICS = 'Alle Themen';
   const DEFAULT_CONFIG = {
     title: 'Schwerin – Pressemitteilungen',
     max_items: 10,
     default_open: false,
     refresh_minutes: 30,
     list_max_height: 400,
+    show_filters: true,
+    highlight_today: true,
+    show_today_count: true,
+    default_period: 'Alle',
+    default_category: ALL_TOPICS,
     feed_url: '',
     page_url: DEFAULT_PAGE_URL,
   };
-  const ALL_TOPICS = 'Alle Themen';
   const FALLBACK_TOPIC = 'Weitere Meldungen';
   const TOPICS = [ALL_TOPICS, 'Verkehr', 'Bildung', 'Politik & Verwaltung', 'Kultur & Veranstaltungen', 'Bauen & Stadtentwicklung', FALLBACK_TOPIC];
   const PERIODS = ['Alle', 'Heute', 'Letzte 7 Tage', 'Letzte 30 Tage'];
@@ -361,6 +366,58 @@
     return Math.max(1, Math.min(50, Number(value) || DEFAULT_CONFIG.max_items));
   }
 
+  function normalizeConfig(config = {}) {
+    // Normalize editor and YAML values while preserving unknown compatible keys.
+    return {
+      ...DEFAULT_CONFIG,
+      ...config,
+      max_items: clampMaxItems(config.max_items ?? DEFAULT_CONFIG.max_items),
+      refresh_minutes: Math.max(5, Math.min(1440, Number(config.refresh_minutes) || DEFAULT_CONFIG.refresh_minutes)),
+      list_max_height: clampListMaxHeight(config.list_max_height ?? DEFAULT_CONFIG.list_max_height),
+      default_open: Boolean(config.default_open ?? DEFAULT_CONFIG.default_open),
+      show_filters: Boolean(config.show_filters ?? DEFAULT_CONFIG.show_filters),
+      highlight_today: Boolean(config.highlight_today ?? DEFAULT_CONFIG.highlight_today),
+      show_today_count: Boolean(config.show_today_count ?? DEFAULT_CONFIG.show_today_count),
+      default_period: PERIODS.includes(config.default_period) ? config.default_period : DEFAULT_CONFIG.default_period,
+      default_category: normalizeWhitespace(config.default_category) || ALL_TOPICS,
+    };
+  }
+
+  function getConfigForm() {
+    // Describe the native Home Assistant visual configuration form.
+    return {
+      schema: [
+        { name: 'title', selector: { text: {} } },
+        { name: 'max_items', selector: { number: { min: 1, max: 50, mode: 'box' } } },
+        { name: 'refresh_minutes', selector: { number: { min: 5, max: 1440, mode: 'box' } } },
+        { name: 'default_open', selector: { boolean: {} } },
+        { name: 'list_max_height', selector: { number: { min: 120, max: 1200, mode: 'box' } } },
+        { name: 'show_filters', selector: { boolean: {} } },
+        { name: 'highlight_today', selector: { boolean: {} } },
+        { name: 'show_today_count', selector: { boolean: {} } },
+        { name: 'default_period', selector: { select: { options: PERIODS } } },
+        { name: 'default_category', selector: { text: {} } },
+        { name: 'page_url', selector: { text: {} } },
+        { name: 'feed_url', selector: { text: {} } },
+      ],
+      computeLabel: (schema) => ({
+        title: 'Kartentitel', max_items: 'Maximale Meldungen', refresh_minutes: 'Aktualisierung (Minuten)',
+        default_open: 'Standardmäßig geöffnet', list_max_height: 'Maximale Listenhöhe (Pixel)',
+        show_filters: 'Filter und Suche anzeigen', highlight_today: 'Heutige Meldungen hervorheben',
+        show_today_count: 'Tageszähler anzeigen', default_period: 'Standardzeitraum',
+        default_category: 'Standardthema', page_url: 'Nachrichtenquelle', feed_url: 'RSS-/Atom-Quelle',
+      }[schema.name]),
+      assertConfig: (config) => {
+        if (config.max_items !== undefined && (Number(config.max_items) < 1 || Number(config.max_items) > 50)) {
+          throw new Error('Maximale Meldungen müssen zwischen 1 und 50 liegen.');
+        }
+        if (config.list_max_height !== undefined && (Number(config.list_max_height) < 120 || Number(config.list_max_height) > 1200)) {
+          throw new Error('Die Listenhöhe muss zwischen 120 und 1200 Pixeln liegen.');
+        }
+      },
+    };
+  }
+
   function createElement(tag, className, value) {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -395,6 +452,15 @@
   `;
 
   class SchwerinNewsCard extends HTMLElement {
+    static getConfigForm() {
+      return getConfigForm();
+    }
+
+    static getStubConfig() {
+      // Supply a complete, usable configuration to the card picker.
+      return { ...DEFAULT_CONFIG };
+    }
+
     constructor() {
       super();
       this.attachShadow({ mode: 'open' });
@@ -412,8 +478,10 @@
 
     setConfig(config) {
       // Apply compatible defaults before the first render.
-      this._config = { ...DEFAULT_CONFIG, ...config };
-      this._expanded = Boolean(this._config.default_open);
+      this._config = normalizeConfig(config);
+      this._expanded = this._config.default_open;
+      this._period = this._config.default_period;
+      this._category = this._config.default_category;
       this._news = [];
       this._status = 'loading';
       this._error = '';
@@ -503,7 +571,7 @@
       else if (this._status === 'error') subtitle = 'Nachrichtenquelle nicht erreichbar';
       else {
         const label = todayCount === 1 ? 'Meldung' : 'Meldungen';
-        subtitle = `${todayCount} ${label} heute · ${this._news.length} geladen${this._status === 'stale' ? ' · Daten möglicherweise veraltet' : ''}`;
+        subtitle = `${this._config.show_today_count ? `${todayCount} ${label} heute · ` : ''}${this._news.length} geladen${this._status === 'stale' ? ' · Daten möglicherweise veraltet' : ''}`;
       }
 
       headingBox.append(createElement('div', 'sub', subtitle));
@@ -525,6 +593,14 @@
       }
 
       if (this._status === 'stale') body.append(createElement('div', 'notice', this._error));
+
+      if (!this._config.show_filters) {
+        const list = createElement('div', 'news-list');
+        const footer = createElement('div', 'footer');
+        body.append(list, footer);
+        this._renderEntries(list, footer);
+        return body;
+      }
 
       const filters = createElement('div', 'filters');
       body.append(filters);
@@ -606,7 +682,7 @@
     }
 
     _renderEntry(item) {
-      const today = dateKey(new Date()) === item.date;
+      const today = this._config.highlight_today && dateKey(new Date()) === item.date;
       const entry = createElement('article', `entry${today ? ' today' : ''}`);
       const title = createElement('a', '', item.title || 'Pressemitteilung');
       let url;
@@ -633,6 +709,8 @@
     ALL_TOPICS,
     categoryOptions,
     clampListMaxHeight,
+    getConfigForm,
+    normalizeConfig,
     PERIODS,
     TOPICS,
     clampMaxItems,
@@ -659,9 +737,10 @@
   if (!global.customCards.some((card) => card.type === 'schwerin-news-card')) {
     global.customCards.push({
       type: 'schwerin-news-card',
-      name: 'Schwerin Pressemitteilungen',
-      description: 'Klappbare Nachrichtenkarte mit Tageszähler, Themen- und Textfilter',
+      name: 'Schwerin News Card',
+      description: 'Aktuelle Pressemitteilungen der Landeshauptstadt Schwerin mit Filter- und Suchfunktion.',
       preview: false,
+      documentationURL: 'https://github.com/frandle82/schwerin-news-card',
     });
   }
 })(typeof window !== 'undefined' ? window : globalThis);
