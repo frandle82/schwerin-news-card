@@ -94,9 +94,11 @@ test('clampListMaxHeight keeps the scroll area configurable and bounded', () => 
 
 test('visual editor exposes defaults, labels, and numeric validation', () => {
   const form = helpers.getConfigForm();
-  assert.ok(form.schema.some((field) => field.name === 'list_max_height'));
+  const heightField = form.schema.find((field) => field.name === 'list_max_height');
+  assert.equal(heightField.selector.number.min, 120);
+  assert.equal(heightField.selector.number.max, 1200);
   assert.equal(helpers.normalizeConfig({}).list_max_height, 400);
   assert.equal(helpers.normalizeConfig({ default_period: 'Heute' }).default_period, 'Heute');
-  assert.throws(() => form.assertConfig({ max_items: 0 }), /zwischen 1 und 50/);
-  assert.throws(() => form.assertConfig({ list_max_height: 2000 }), /zwischen 120 und 1200/);
+  assert.equal(helpers.normalizeConfig({ list_max_height: '' }).list_max_height, 400);
+  assert.equal(helpers.normalizeConfig({ list_max_height: 2000 }).list_max_height, 1200);
 });

@@ -11,6 +11,8 @@ Eigenständige Home-Assistant-Dashboard-Karte für Pressemitteilungen der Landes
 
 Die Karte kann ohne Entitätsauswahl hinzugefügt werden. Der visuelle Editor verwendet die native Home-Assistant-Formularschnittstelle. Die manuelle YAML-Konfiguration bleibt als Alternative verfügbar.
 
+Der Editor bleibt auch während der Eingabe numerischer Werte aktiv. Leere Zwischenwerte werden erst beim Übernehmen der Konfiguration normalisiert.
+
 ## Installation über HACS
 
 1. Dieses Repository als HACS-Dashboard-Repository verwenden.
@@ -56,6 +58,7 @@ Optionale Felder:
 - Filteroptionen werden aus den tatsächlich gelieferten Kategorien gebildet; heuristische Themen erscheinen nur, wenn die Quelle keine Kategorien liefert.
 - Die Liste markiert Meldungen vom aktuellen Tag und bietet eine gut erreichbare Suche-zurücksetzen-Schaltfläche.
 - Mit `list_max_height` lässt sich die maximale Listenhöhe anpassen; der interne Scrollbereich funktioniert auch auf Touch-Geräten.
+- Wenn weitere Meldungen unterhalb des sichtbaren Bereichs vorhanden sind, zeigt ein dezenter Hinweis den Scrollbereich an und verschwindet am Listenende.
 - Nutzt Home-Assistant-Theme-Variablen für helle und dunkle Themes.
 - Erfindet keine fehlenden Meldungen. Wenn die Quelle nicht lesbar ist oder die HTML-Struktur nicht passt, zeigt die Karte einen Fehlerzustand.
 
@@ -96,6 +99,12 @@ Die Karte lädt die offizielle Website direkt im Browser. Das funktioniert nur, 
 - Scrollbare Nachrichtenliste mit konfigurierbarer maximaler Höhe.
 - Erweiterte Tests für Editor-Konfiguration und Eingabevalidierung.
 - README und technische Dokumentation für die visuelle Einrichtung aktualisiert.
+
+## UI-Hinweise
+
+- Der Kartenkopf bleibt kompakt und bietet einen großen, tastaturbedienbaren Chevron-Schalter.
+- Die Suche aktualisiert nur die Ergebnisliste, damit Eingabefokus und Cursorposition erhalten bleiben.
+- Die Scrollanzeige berücksichtigt Filteränderungen und wird bei reduzierter Bewegung ohne Animation dargestellt.
 
 ## Änderungen v0.2.0
 

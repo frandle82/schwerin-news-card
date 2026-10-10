@@ -22,7 +22,8 @@ Nicht Bestandteil der Architektur:
 6. `filterNews()` wendet Zeitraum, Thema und Stichwortsuche an.
 7. `categoryOptions()` erstellt die Themenauswahl aus den gelieferten Kategorien; heuristische Zuordnung wird nur als Fallback bei vollständig fehlenden Kategorien verwendet.
 8. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM; die Liste erhält eine begrenzte Höhe und einen eigenen vertikalen Scrollbereich.
-9. `getConfigForm()` exposes the native Home Assistant visual editor; `getStubConfig()` provides picker defaults and `assertConfig()` validates numeric values.
+9. `getConfigForm()` exposes the native Home Assistant visual editor; `getStubConfig()` provides picker defaults and `normalizeConfig()` safely normalizes numeric values after editing.
+10. Search updates reuse the existing result list to preserve focus; scroll hints are derived from `scrollHeight`, `clientHeight`, and `scrollTop` and observers are disconnected on teardown.
 
 ## Parser-Regeln
 

@@ -407,14 +407,6 @@
         show_today_count: 'Tageszähler anzeigen', default_period: 'Standardzeitraum',
         default_category: 'Standardthema', page_url: 'Nachrichtenquelle', feed_url: 'RSS-/Atom-Quelle',
       }[schema.name]),
-      assertConfig: (config) => {
-        if (config.max_items !== undefined && (Number(config.max_items) < 1 || Number(config.max_items) > 50)) {
-          throw new Error('Maximale Meldungen müssen zwischen 1 und 50 liegen.');
-        }
-        if (config.list_max_height !== undefined && (Number(config.list_max_height) < 120 || Number(config.list_max_height) > 1200)) {
-          throw new Error('Die Listenhöhe muss zwischen 120 und 1200 Pixeln liegen.');
-        }
-      },
     };
   }
 
@@ -428,11 +420,16 @@
   const styles = `
     :host { display:block; color:var(--primary-text-color); }
     ha-card { display:block; overflow:hidden; }
-    .header {width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;font:inherit;box-sizing:border-box;}
+    .header {width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;font:inherit;box-sizing:border-box;}
+    .header-main {display:flex;align-items:center;gap:10px;min-width:0;}
+    .news-icon {width:30px;height:30px;display:grid;place-items:center;flex:0 0 30px;border-radius:50%;background:color-mix(in srgb, var(--primary-color) 12%, transparent);color:var(--primary-color);font-size:17px;}
     .heading {font-size:16px;font-weight:650;line-height:1.35;}
     .sub {font-size:12px;color:var(--secondary-text-color);margin-top:4px;}
-    .arrow {font-size:18px;color:var(--secondary-text-color);flex-shrink:0;}
-    .body {padding:0 18px 12px;}
+    .arrow-button {width:44px;height:44px;display:grid;place-items:center;flex:0 0 44px;border:0;border-radius:50%;background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);color:var(--primary-text-color);cursor:pointer;}
+    .chevron {width:9px;height:9px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg) translate(-2px,-2px);transition:transform .18s ease;}
+    .chevron.open {transform:rotate(225deg) translate(-2px,-2px);}
+    .arrow-button:hover {background:color-mix(in srgb, var(--primary-color) 16%, transparent);}
+    .body {padding:0 12px 10px;}
     .filters {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px;}
     select,input {width:100%;box-sizing:border-box;min-width:0;background:var(--card-background-color, var(--ha-card-background, #fff));color:var(--primary-text-color);border:1px solid var(--divider-color,#ddd);border-radius:8px;padding:9px;font:inherit;font-size:13px;}
     input {grid-column:1 / -1;}
@@ -446,8 +443,12 @@
     .meta {color:var(--secondary-text-color);font-size:11px;margin:5px 0 4px;}
     .notice {font-size:13px;color:var(--secondary-text-color);padding:12px 0;}
     .footer {font-size:11px;color:var(--secondary-text-color);padding:10px 0 0;border-top:1px solid var(--divider-color,#ddd);}
-    .news-list {max-height:var(--news-list-max-height,400px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;}
+    .list-wrap {position:relative;}
+    .news-list {max-height:var(--news-list-max-height,400px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;}
+    .scroll-hint {position:absolute;right:8px;bottom:6px;padding:3px 8px;border-radius:10px;background:var(--card-background-color, var(--ha-card-background,#fff));color:var(--secondary-text-color);font-size:11px;box-shadow:0 1px 5px color-mix(in srgb, var(--primary-text-color) 18%, transparent);pointer-events:none;}
+    .scroll-hint[hidden] {display:none;}
     button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:2px;}
+    @media(prefers-reduced-motion:reduce){ .chevron {transition:none;} }
     @media(max-width:420px){ .filters {grid-template-columns:1fr;} }
   `;
 
@@ -474,6 +475,7 @@
       this._timer = null;
       this._requestId = 0;
       this._source = '';
+      this._resizeObserver = null;
     }
 
     setConfig(config) {
@@ -501,6 +503,8 @@
       if (this._timer) clearInterval(this._timer);
       this._timer = null;
       this._requestId += 1;
+      if (this._resizeObserver) this._resizeObserver.disconnect();
+      this._resizeObserver = null;
     }
 
     getCardSize() {
@@ -542,6 +546,7 @@
       if (!this._config) return;
 
       const root = this.shadowRoot;
+      if (this._resizeObserver) this._resizeObserver.disconnect();
       root.replaceChildren();
       root.append(createElement('style', '', styles));
 
@@ -575,7 +580,12 @@
       }
 
       headingBox.append(createElement('div', 'sub', subtitle));
-      header.append(headingBox, createElement('span', 'arrow', this._expanded ? '▴' : '▾'));
+      const headerMain = createElement('div', 'header-main');
+      headerMain.append(createElement('span', 'news-icon', '▤'), headingBox);
+      const arrowButton = createElement('span', 'arrow-button');
+      arrowButton.setAttribute('aria-hidden', 'true');
+      arrowButton.append(createElement('span', `chevron${this._expanded ? ' open' : ''}`));
+      header.append(headerMain, arrowButton);
       header.addEventListener('click', () => {
         // Toggle the compact header without changing the dashboard config.
         this._expanded = !this._expanded;
@@ -595,10 +605,15 @@
       if (this._status === 'stale') body.append(createElement('div', 'notice', this._error));
 
       if (!this._config.show_filters) {
+        const listWrap = createElement('div', 'list-wrap');
         const list = createElement('div', 'news-list');
+        const hint = createElement('div', 'scroll-hint', 'Weitere Meldungen');
+        hint.hidden = true;
+        listWrap.append(list, hint);
         const footer = createElement('div', 'footer');
-        body.append(list, footer);
-        this._renderEntries(list, footer);
+        body.append(listWrap, footer);
+        this._renderEntries(list, footer, hint);
+        list.addEventListener('scroll', () => this._updateScrollHint(list, hint), { passive: true });
         return body;
       }
 
@@ -617,10 +632,19 @@
       }));
       filters.append(this._renderSearchInput());
 
+      const listWrap = createElement('div', 'list-wrap');
       const list = createElement('div', 'news-list');
+      const hint = createElement('div', 'scroll-hint', 'Weitere Meldungen');
+      hint.hidden = true;
+      listWrap.append(list, hint);
       const footer = createElement('div', 'footer');
-      body.append(list, footer);
-      this._renderEntries(list, footer);
+      body.append(listWrap, footer);
+      this._renderEntries(list, footer, hint);
+      list.addEventListener('scroll', () => this._updateScrollHint(list, hint), { passive: true });
+      if (typeof ResizeObserver !== 'undefined') {
+        this._resizeObserver = new ResizeObserver(() => this._updateScrollHint(list, hint));
+        this._resizeObserver.observe(list);
+      }
       return body;
     }
 
@@ -646,7 +670,10 @@
       search.value = this._search;
       search.addEventListener('input', (event) => {
         this._search = event.target.value;
-        this._render();
+        const list = this.shadowRoot.querySelector('.news-list');
+        const footer = this.shadowRoot.querySelector('.footer');
+        const hint = this.shadowRoot.querySelector('.scroll-hint');
+        if (list && footer) this._renderEntries(list, footer, hint);
       });
       row.append(search);
       if (this._search) {
@@ -655,14 +682,18 @@
         clear.setAttribute('aria-label', 'Stichwortsuche zurücksetzen');
         clear.addEventListener('click', () => {
           this._search = '';
-          this._render();
+          const list = this.shadowRoot.querySelector('.news-list');
+          const footer = this.shadowRoot.querySelector('.footer');
+          const hint = this.shadowRoot.querySelector('.scroll-hint');
+          if (list && footer) this._renderEntries(list, footer, hint);
+          else this._render();
         });
         row.append(clear);
       }
       return row;
     }
 
-    _renderEntries(list, footer) {
+    _renderEntries(list, footer, hint) {
       // Limit the visible list height and enable vertical scrolling.
       list.replaceChildren();
       const max = clampMaxItems(this._config.max_items);
@@ -678,7 +709,16 @@
         list.append(this._renderEntry(item));
       }
 
+      if (hint) this._updateScrollHint(list, hint);
+
       footer.textContent = `${Math.min(filtered.length, max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._news.length} aus ${this._source || 'Quelle'} geladen`;
+    }
+
+    _updateScrollHint(list, hint) {
+      // Show the affordance only while more content is available below.
+      const hasOverflow = list.scrollHeight > list.clientHeight + 1;
+      const atEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 2;
+      hint.hidden = !hasOverflow || atEnd;
     }
 
     _renderEntry(item) {
