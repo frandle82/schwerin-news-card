@@ -59,6 +59,7 @@ Optionale Felder:
 - Die Liste markiert Meldungen vom aktuellen Tag und bietet eine gut erreichbare Suche-zurücksetzen-Schaltfläche.
 - Mit `list_max_height` lässt sich die maximale Listenhöhe anpassen; der interne Scrollbereich funktioniert auch auf Touch-Geräten.
 - Wenn weitere Meldungen unterhalb des sichtbaren Bereichs vorhanden sind, zeigt ein dezenter Hinweis den Scrollbereich an und verschwindet am Listenende.
+- In Sections-Dashboards verwendet die Karte standardmäßig `columns: 12` ohne feste Zeilenhöhe. Dadurch passt sich der eingeklappte Zustand automatisch an den Inhalt an; vorhandene `grid_options` bleiben unverändert.
 - Nutzt Home-Assistant-Theme-Variablen für helle und dunkle Themes.
 - Erfindet keine fehlenden Meldungen. Wenn die Quelle nicht lesbar ist oder die HTML-Struktur nicht passt, zeigt die Karte einen Fehlerzustand.
 

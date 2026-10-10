@@ -383,6 +383,12 @@
     };
   }
 
+  function gridOptionsForConfig(config = {}) {
+    // Let explicit dashboard sizing win; otherwise allow content-driven rows.
+    if (config.grid_options && typeof config.grid_options === 'object') return { ...config.grid_options };
+    return { columns: 12 };
+  }
+
   function getConfigForm() {
     // Describe the native Home Assistant visual configuration form.
     return {
@@ -512,7 +518,7 @@
     }
 
     getGridOptions() {
-      return { columns: 12, min_columns: 4, rows: this._expanded ? 7 : 2, min_rows: 2 };
+      return gridOptionsForConfig(this._config);
     }
 
     _start() {
@@ -750,6 +756,7 @@
     categoryOptions,
     clampListMaxHeight,
     getConfigForm,
+    gridOptionsForConfig,
     normalizeConfig,
     PERIODS,
     TOPICS,

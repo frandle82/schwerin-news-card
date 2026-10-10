@@ -102,3 +102,11 @@ test('visual editor exposes defaults, labels, and numeric validation', () => {
   assert.equal(helpers.normalizeConfig({ list_max_height: '' }).list_max_height, 400);
   assert.equal(helpers.normalizeConfig({ list_max_height: 2000 }).list_max_height, 1200);
 });
+
+test('grid options use automatic rows without overriding explicit dashboard settings', () => {
+  assert.deepEqual(helpers.gridOptionsForConfig({}), { columns: 12 });
+  assert.deepEqual(
+    helpers.gridOptionsForConfig({ grid_options: { columns: 6, rows: 3, min_rows: 2 } }),
+    { columns: 6, rows: 3, min_rows: 2 },
+  );
+});

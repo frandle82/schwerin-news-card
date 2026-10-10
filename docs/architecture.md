@@ -24,6 +24,7 @@ Nicht Bestandteil der Architektur:
 8. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM; die Liste erhält eine begrenzte Höhe und einen eigenen vertikalen Scrollbereich.
 9. `getConfigForm()` exposes the native Home Assistant visual editor; `getStubConfig()` provides picker defaults and `normalizeConfig()` safely normalizes numeric values after editing.
 10. Search updates reuse the existing result list to preserve focus; scroll hints are derived from `scrollHeight`, `clientHeight`, and `scrollTop` and observers are disconnected on teardown.
+11. Sections sizing defaults to `{ columns: 12 }` so Home Assistant can derive the row height from content; explicit `grid_options` are preserved.
 
 ## Parser-Regeln
 
