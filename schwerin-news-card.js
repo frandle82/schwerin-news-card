@@ -1,4 +1,4 @@
-/* Schwerin News Card v1.1.0 — direct RSS loading (CORS required) */
+/* Schwerin News Card v1.2.0 — direct RSS loading (CORS required) */
 class SchwerinNewsCard extends HTMLElement {
   constructor() {
     super();
@@ -49,34 +49,92 @@ class SchwerinNewsCard extends HTMLElement {
 
   async _load() {
     const id = ++this._requestId;
+    const failures = [];
+    let news = [];
+    let source = '';
+    const pageUrl = this._config.page_url;
     try {
-      let feed = this._config.feed_url;
-      if (!feed) {
-        const page = await this._fetchText(this._config.page_url);
-        const dom = new DOMParser().parseFromString(page, 'text/html');
-        const links = Array.from(dom.querySelectorAll('a[href], link[href]'));
-        const found = links.find(el =>
-          /rss|pressemitteilungen abonnieren/i.test(
-            [el.getAttribute('href'),el.getAttribute('type'),el.textContent].join(' ')
-          )
-        );
-        if (!found) throw new Error('Kein RSS-Link auf der Pressemitteilungsseite gefunden. Bitte feed_url in der Karte hinterlegen.');
-        feed = new URL(found.getAttribute('href'), this._config.page_url).href;
+      // Explicit RSS URL avoids fetching the HTML index first.
+      if (this._config.feed_url) {
+        const url = new URL(this._config.feed_url, pageUrl).href;
+        try { news = this._parseFeed(await this._fetchText(url), url); source = 'RSS'; }
+        catch (e) { failures.push(`RSS: ${e.message}`); }
       }
-      const text = await this._fetchText(feed);
-      const news = this._parseFeed(text, feed);
-      if (!news.length) throw new Error('Feed enthält keine lesbaren Meldungen.');
+      if (!news.length) {
+        let html = '';
+        try { html = await this._fetchText(pageUrl); }
+        catch (e) { failures.push(`Webseite: ${e.message}`); }
+        if (html) {
+          try { news = this._parseHtml(html, pageUrl); source = 'Webseite'; }
+          catch (e) { failures.push(`HTML: ${e.message}`); }
+          if (!news.length && !this._config.feed_url) {
+            const dom = new DOMParser().parseFromString(html, 'text/html');
+            const feedLink = Array.from(dom.querySelectorAll('a[href],link[href]')).find(el =>
+              /rss|pressemitteilungen abonnieren/i.test(
+                [el.getAttribute('href'), el.getAttribute('type'), el.textContent].join(' '))
+            );
+            if (feedLink) {
+              try {
+                const url = new URL(feedLink.getAttribute('href'), pageUrl).href;
+                news = this._parseFeed(await this._fetchText(url), url); source = 'RSS';
+              } catch (e) { failures.push(`RSS-Erkennung: ${e.message}`); }
+            }
+          }
+        }
+      }
+      if (!news.length) throw new Error(failures.join(' | ') || 'Keine Pressemitteilungen auf der Quellseite erkannt.');
       if (id !== this._requestId || !this.isConnected) return;
       this._news = news;
+      this._source = source;
       this._status = 'ok';
       this._error = '';
-      this._feed = feed;
     } catch (err) {
       if (id !== this._requestId || !this.isConnected) return;
       this._status = this._news.length ? 'stale' : 'error';
-      this._error = String(err?.message || err) + ' – Falls der Browser „Failed to fetch“ meldet, kann CORS die Ursache sein.';
+      this._error = String(err?.message || err) +
+        ' — Bei „Failed to fetch“ oder „Load failed“ bitte in der Browser-Konsole auf CORS prüfen. Ohne CORS-Freigabe ist ein direkter Browserabruf nicht möglich.';
     }
     this._render();
+  }
+
+  _parseHtml(html, base) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const pattern = /(?:^|\s)(\d{2})\.(\d{2})\.(20\d{2})(?:\s|$)/;
+    const items = new Map();
+    const headings = doc.querySelectorAll('h2, h3, h4');
+    for (const heading of headings) {
+      const anchor = heading.querySelector('a[href]');
+      if (!anchor) continue;
+      const title = anchor.textContent.replace(/\s+/g, ' ').trim();
+      if (title.length < 12 || /^alles lesen/i.test(title)) continue;
+      let url;
+      try { url = new URL(anchor.getAttribute('href'), base); }
+      catch { continue; }
+      if (url.protocol !== 'https:' || !/(^|\.)schwerin\.de$/i.test(url.hostname) ||
+          !url.pathname.includes('/pressemitteilungen/') || url.pathname === new URL(base).pathname) continue;
+      // Publication metadata is commonly a sibling directly before the headline.
+      const blocks = [];
+      let node = heading;
+      for (let depth = 0; depth < 3; depth++) {
+        let prev = node.previousElementSibling;
+        for (let i = 0; prev && i < 4; i++, prev = prev.previousElementSibling) {
+          blocks.push((prev.textContent || '').replace(/\s+/g, ' ').trim().slice(-400));
+        }
+        node = node.parentElement;
+        if (!node || node === doc.body) break;
+      }
+      const vicinity = blocks.join(' ');
+      const dateMatch = vicinity.match(pattern);
+      if (!dateMatch) continue;
+      const date = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
+      // The closest matching metadata block supplies the publisher's category.
+      const meta = blocks.find(x => pattern.test(x)) || '';
+      const category = meta.replace(pattern, '').replace(/Alles lesen\.\.\./gi, '').trim().slice(0,100);
+      const parent = heading.parentElement;
+      const description = (parent?.querySelector('p')?.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
+      items.set(url.href, {title, url:url.href, date, category, description});
+    }
+    return [...items.values()].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,120);
   }
 
   async _fetchText(url) {
@@ -219,7 +277,7 @@ class SchwerinNewsCard extends HTMLElement {
     const body = this._el('div','body');
     card.append(body);
     if (this._status === 'error' || this._status === 'loading') {
-      body.append(this._el('div','notice',this._status === 'loading' ? 'RSS-Feed wird geladen …' : this._error));
+      body.append(this._el('div','notice',this._status === 'loading' ? 'Pressemitteilungen werden geladen …' : this._error));
       return;
     }
     if (this._status === 'stale') body.append(this._el('div','notice',this._error));
@@ -278,7 +336,7 @@ class SchwerinNewsCard extends HTMLElement {
       entry.append(this._el('div','desc',item.description || 'Keine Kurzbeschreibung verfügbar.'));
       list.append(entry);
     }
-    footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} aus RSS geladen`;
+    footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} aus ${this._source || "Quelle"} geladen`;
   }
 }
 if (!customElements.get('schwerin-news-card')) customElements.define('schwerin-news-card', SchwerinNewsCard);
