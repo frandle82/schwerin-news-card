@@ -1,6 +1,6 @@
 {
   "name": "schwerin-news-card",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Home Assistant Lovelace custom card for Schwerin press releases.",
   "private": true,
   "scripts": {

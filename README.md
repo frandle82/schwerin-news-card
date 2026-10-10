@@ -1,4 +1,4 @@
-# Schwerin News Card v0.2.0
+# Schwerin News Card v0.3.0
 
 Eigenständige Home-Assistant-Dashboard-Karte für Pressemitteilungen der Landeshauptstadt Schwerin. Die Karte läuft komplett im Browser: keine Backend-Integration, kein Python-Skript, keine Home-Assistant-Helfer und kein externer Proxy.
 
@@ -14,7 +14,7 @@ Die Karte kann ohne Entitätsauswahl hinzugefügt werden. Der visuelle Editor ve
 ## Installation über HACS
 
 1. Dieses Repository als HACS-Dashboard-Repository verwenden.
-2. Release mit passendem Tag installieren, z. B. `v0.2.0`.
+2. Release mit passendem Tag installieren, z. B. `v0.3.0`.
 3. Sicherstellen, dass `/hacsfiles/schwerin-news-card/schwerin-news-card.js` als JavaScript-Modul eingebunden ist.
 4. Dashboard neu laden und bei Bedarf den Browsercache leeren.
 
@@ -88,6 +88,14 @@ Die Tests verwenden realistische HTML-Fixtures und prüfen Parser, Datumsverarbe
 ## CORS-Hinweis
 
 Die Karte lädt die offizielle Website direkt im Browser. Das funktioniert nur, wenn der Browser die Quelle wegen CORS und Netzwerkerreichbarkeit abrufen darf. Es wird bewusst kein externer Proxy und keine Home-Assistant-Backend-Integration verwendet.
+
+## Änderungen v0.3.0
+
+- Native Home-Assistant-Visual-Configuration mit `getConfigForm()` und `getStubConfig()`.
+- Validierte grafische Einstellungen für Anzeige, Filter, Quellen und Standardwerte.
+- Scrollbare Nachrichtenliste mit konfigurierbarer maximaler Höhe.
+- Erweiterte Tests für Editor-Konfiguration und Eingabevalidierung.
+- README und technische Dokumentation für die visuelle Einrichtung aktualisiert.
 
 ## Änderungen v0.2.0
 

@@ -1,4 +1,4 @@
-/* Schwerin News Card v0.2.0 - direct website loading (CORS required) */
+/* Schwerin News Card v0.3.0 - direct website loading (CORS required) */
 (function initSchwerinNewsCard(global) {
   'use strict';
 
