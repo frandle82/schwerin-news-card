@@ -21,7 +21,7 @@ const news = [
     title: 'Theater zeigt Premiere',
     url: 'https://www.schwerin.de/news/theater/',
     date: '2026-09-15',
-    category: '',
+    category: 'Kultur',
   },
 ];
 
@@ -65,9 +65,17 @@ test('filterNews applies period, topic and keyword filters', () => {
     ['Schule startet neues Projekt'],
   );
   assert.deepEqual(
-    helpers.filterNews(news, { period: 'Alle', category: 'Kultur & Veranstaltungen', search: '' }, now)
+    helpers.filterNews(news, { period: 'Alle', category: 'Kultur', search: '' }, now)
       .map((item) => item.title),
     ['Theater zeigt Premiere'],
+  );
+});
+
+test('categoryOptions uses source categories and only falls back when none exist', () => {
+  assert.deepEqual(helpers.categoryOptions(news), ['Alle Themen', 'Bildung', 'Kultur', 'Verkehr']);
+  assert.deepEqual(
+    helpers.categoryOptions(news.map(({ category, ...item }) => item)),
+    ['Alle Themen', 'Verkehr', 'Bildung', 'Kultur & Veranstaltungen'],
   );
 });
 

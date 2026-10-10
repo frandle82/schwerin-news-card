@@ -20,7 +20,8 @@ Nicht Bestandteil der Architektur:
 4. `parseHtmlNews()` liest Meldungen aus `.event-item-content`.
 5. `normalizeArticleUrl()` akzeptiert nur sichere Schwerin-News-Links und normalisiert den bekannten internen CMS-Host.
 6. `filterNews()` wendet Zeitraum, Thema und Stichwortsuche an.
-7. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM.
+7. `categoryOptions()` erstellt die Themenauswahl aus den gelieferten Kategorien; heuristische Zuordnung wird nur als Fallback bei vollständig fehlenden Kategorien verwendet.
+8. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM.
 
 ## Parser-Regeln
 
@@ -43,6 +44,8 @@ Abgedeckt sind:
 - Link-Normalisierung und Ablehnung unsicherer/fremder Links
 - Datumsformatierung und ungueltige Datumswerte
 - Zeitraum-, Themen- und Suchfilter
+- Dynamische Kategorien und Fallback-Themen
+- Mobile Filterdarstellung und Such-Reset
 - HACS-Dateireferenz und Versionskonsistenz
 
 ## Wartungsnotizen

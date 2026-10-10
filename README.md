@@ -1,11 +1,11 @@
-# Schwerin News Card v0.1.1
+# Schwerin News Card v0.2.0
 
 Eigenstaendige Home-Assistant-Dashboard-Karte fuer Pressemitteilungen der Landeshauptstadt Schwerin. Die Karte laeuft komplett im Browser: keine Backend-Integration, kein Python-Skript, keine Home-Assistant-Helfer und kein externer Proxy.
 
 ## Installation ueber HACS
 
 1. Dieses Repository als HACS-Dashboard-Repository verwenden.
-2. Release mit passendem Tag installieren, z. B. `v0.1.1`.
+2. Release mit passendem Tag installieren, z. B. `v0.2.0`.
 3. Sicherstellen, dass `/hacsfiles/schwerin-news-card/schwerin-news-card.js` als JavaScript-Modul eingebunden ist.
 4. Dashboard neu laden und bei Bedarf den Browsercache leeren.
 
@@ -37,7 +37,9 @@ Optionale Felder:
 - Normalisiert bekannte interne CMS-Links von `http://10.1.1.252/news/...` nach `https://www.schwerin.de/news/...`.
 - Zeigt Datumswerte als `TT.MM.JJJJ`.
 - Zeigt keine Artikelbeschreibungen in der Liste.
-- Bietet Tageszaehler, Zeitraumfilter, Themenfilter und Stichwortsuche.
+- Bietet Tageszaehler, Zeitraumfilter, quellengestützte Themenfilter und Stichwortsuche.
+- Filteroptionen werden aus den tatsächlich gelieferten Kategorien gebildet; heuristische Themen erscheinen nur, wenn die Quelle keine Kategorien liefert.
+- Die Liste markiert Meldungen vom aktuellen Tag und bietet eine gut erreichbare Suche-zurücksetzen-Schaltfläche.
 - Nutzt Home-Assistant-Theme-Variablen fuer helle und dunkle Themes.
 - Erfindet keine fehlenden Meldungen. Wenn die Quelle nicht lesbar ist oder die HTML-Struktur nicht passt, zeigt die Karte einen Fehlerzustand.
 
@@ -50,7 +52,7 @@ Die ausgelieferte HACS-Datei bleibt `schwerin-news-card.js`. Innerhalb dieser Da
 - Feed-Erkennung: `parseFeedNews()`
 - Link-Sicherheit: `normalizeArticleUrl()`
 - Datumslogik: `parseDate()`, `dateKey()` und `formatDisplayDate()`
-- Filterung: `filterNews()` und `topicForItem()`
+- Filterung: `filterNews()`, `categoryOptions()` und `itemCategory()`
 - Darstellung: `SchwerinNewsCard` mit Shadow DOM und Home-Assistant-kompatiblen Methoden
 
 Die Hilfsfunktionen werden unter `window.SchwerinNewsCardHelpers` bereitgestellt, damit sie automatisiert getestet werden koennen. Die Home-Assistant-Nutzung bleibt unveraendert ueber `custom:schwerin-news-card`.
@@ -70,6 +72,13 @@ Die Tests verwenden realistische HTML-Fixtures und pruefen Parser, Datumsverarbe
 ## CORS-Hinweis
 
 Die Karte laedt die offizielle Website direkt im Browser. Das funktioniert nur, wenn der Browser die Quelle wegen CORS und Netzwerkerreichbarkeit abrufen darf. Es wird bewusst kein externer Proxy und keine Home-Assistant-Backend-Integration verwendet.
+
+## Aenderungen v0.2.0
+
+- Kompaktere, mobile Filterbedienung mit Touch-Zielen und Such-Reset.
+- Dynamische Themenfilter ohne künstliche Kategorien bei vorhandenen Quelldaten.
+- Meldungen des aktuellen Tages werden visuell hervorgehoben.
+- Version und HACS-Dokumentation auf `0.2.0` aktualisiert.
 
 ## Aenderungen v0.1.1
 

@@ -1,4 +1,4 @@
-/* Schwerin News Card v0.1.1 - direct website loading (CORS required) */
+/* Schwerin News Card v0.2.0 - direct website loading (CORS required) */
 (function initSchwerinNewsCard(global) {
   'use strict';
 
@@ -11,15 +11,9 @@
     feed_url: '',
     page_url: DEFAULT_PAGE_URL,
   };
-  const TOPICS = [
-    'Alle Themen',
-    'Verkehr',
-    'Bildung',
-    'Politik & Verwaltung',
-    'Kultur & Veranstaltungen',
-    'Bauen & Stadtentwicklung',
-    'Sonstiges',
-  ];
+  const ALL_TOPICS = 'Alle Themen';
+  const FALLBACK_TOPIC = 'Weitere Meldungen';
+  const TOPICS = [ALL_TOPICS, 'Verkehr', 'Bildung', 'Politik & Verwaltung', 'Kultur & Veranstaltungen', 'Bauen & Stadtentwicklung', FALLBACK_TOPIC];
   const PERIODS = ['Alle', 'Heute', 'Letzte 7 Tage', 'Letzte 30 Tage'];
   const DATE_PATTERN = /\b(\d{2})\.(\d{2})\.(20\d{2})\b/;
   const PUBLIC_HOST_PATTERN = /(^|\.)schwerin\.de$/i;
@@ -291,7 +285,10 @@
   }
 
   function topicForItem(item) {
-    const official = String(item.category || '').toLocaleLowerCase('de');
+    const category = normalizeWhitespace(item.category);
+    if (category) return category;
+
+    const official = category.toLocaleLowerCase('de');
     if (/verkehr|ordnung|sicherheit/.test(official)) return 'Verkehr';
     if (/bildung|schule|jugend|familie/.test(official)) return 'Bildung';
     if (/politik|verwaltung/.test(official)) return 'Politik & Verwaltung';
@@ -306,7 +303,24 @@
       ['Kultur & Veranstaltungen', /veranstaltung|konzert|kultur|museum|theater|festival|fest|ausstellung/],
       ['Bauen & Stadtentwicklung', /wohn|bauprojekt|stadtentwicklung|sanierung|quartier|bebauungsplan/],
     ];
-    return (groups.find(([, pattern]) => pattern.test(title)) || ['Sonstiges'])[0];
+    return (groups.find(([, pattern]) => pattern.test(title)) || [FALLBACK_TOPIC])[0];
+  }
+
+  function categoryOptions(items) {
+    const explicit = items.map((item) => normalizeWhitespace(item.category)).filter(Boolean);
+    if (!explicit.length) {
+      return [ALL_TOPICS, ...new Set(items.map(topicForItem))];
+    }
+
+    const categories = [...new Set(explicit)];
+    if (items.some((item) => !normalizeWhitespace(item.category))) categories.push('Ohne Kategorie');
+    return [ALL_TOPICS, ...categories.sort((a, b) => a.localeCompare(b, 'de'))];
+  }
+
+  function itemCategory(item, useFallback) {
+    const category = normalizeWhitespace(item.category);
+    if (category) return category;
+    return useFallback ? topicForItem(item) : 'Ohne Kategorie';
   }
 
   function filterNews(items, filters, now = new Date()) {
@@ -316,13 +330,14 @@
 
     const today = dateKey(now);
     const needle = String(filters.search || '').trim().toLocaleLowerCase('de');
+    const useFallback = !items.some((item) => normalizeWhitespace(item.category));
 
     return items
       .filter((item) => {
         const date = parseDate(item.date);
         if (filters.period === 'Heute' && (!date || dateKey(date) !== today)) return false;
         if (filters.period !== 'Alle' && filters.period !== 'Heute' && (!date || date < start || date > now)) return false;
-        if (filters.category !== 'Alle Themen' && topicForItem(item) !== filters.category) return false;
+        if (filters.category !== ALL_TOPICS && itemCategory(item, useFallback) !== filters.category) return false;
         return String(item.title || '').toLocaleLowerCase('de').includes(needle);
       })
       .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0));
@@ -350,14 +365,18 @@
     .filters {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px;}
     select,input {width:100%;box-sizing:border-box;min-width:0;background:var(--card-background-color, var(--ha-card-background, #fff));color:var(--primary-text-color);border:1px solid var(--divider-color,#ddd);border-radius:8px;padding:9px;font:inherit;font-size:13px;}
     input {grid-column:1 / -1;}
+    .search-row {display:flex;gap:6px;grid-column:1 / -1;}
+    .search-row input {flex:1;}
+    .clear-search {min-width:40px;border:1px solid var(--divider-color,#ddd);border-radius:8px;background:transparent;color:var(--secondary-text-color);font:inherit;font-size:18px;cursor:pointer;}
     .entry {padding:12px 0;border-top:1px solid var(--divider-color,#ddd);}
+    .entry.today {border-left:3px solid var(--primary-color);padding-left:10px;}
     .entry a {color:var(--primary-text-color);font-size:14px;font-weight:600;text-decoration:none;line-height:1.4;}
     .entry a:hover {color:var(--primary-color);text-decoration:underline;}
     .meta {color:var(--secondary-text-color);font-size:11px;margin:5px 0 4px;}
     .notice {font-size:13px;color:var(--secondary-text-color);padding:12px 0;}
     .footer {font-size:11px;color:var(--secondary-text-color);padding:10px 0 0;border-top:1px solid var(--divider-color,#ddd);}
     button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:2px;}
-    @media(max-width:350px){ .filters {grid-template-columns:1fr;} }
+    @media(max-width:420px){ .filters {grid-template-columns:1fr;} }
   `;
 
   class SchwerinNewsCard extends HTMLElement {
@@ -366,7 +385,7 @@
       this.attachShadow({ mode: 'open' });
       this._expanded = false;
       this._period = 'Alle';
-      this._category = 'Alle Themen';
+      this._category = ALL_TOPICS;
       this._search = '';
       this._news = [];
       this._status = 'loading';
@@ -493,7 +512,9 @@
         this._period = value;
         this._render();
       }));
-      filters.append(this._renderSelect('Thema', TOPICS, this._category, (value) => {
+      const categories = categoryOptions(this._news);
+      if (!categories.includes(this._category)) this._category = ALL_TOPICS;
+      filters.append(this._renderSelect('Thema', categories, this._category, (value) => {
         this._category = value;
         this._render();
       }));
@@ -520,6 +541,7 @@
     }
 
     _renderSearchInput() {
+      const row = createElement('div', 'search-row');
       const search = createElement('input');
       search.type = 'search';
       search.placeholder = 'Stichwort suchen ...';
@@ -529,7 +551,18 @@
         this._search = event.target.value;
         this._render();
       });
-      return search;
+      row.append(search);
+      if (this._search) {
+        const clear = createElement('button', 'clear-search', '×');
+        clear.type = 'button';
+        clear.setAttribute('aria-label', 'Stichwortsuche zurücksetzen');
+        clear.addEventListener('click', () => {
+          this._search = '';
+          this._render();
+        });
+        row.append(clear);
+      }
+      return row;
     }
 
     _renderEntries(list, footer) {
@@ -551,7 +584,8 @@
     }
 
     _renderEntry(item) {
-      const entry = createElement('article', 'entry');
+      const today = dateKey(new Date()) === item.date;
+      const entry = createElement('article', `entry${today ? ' today' : ''}`);
       const title = createElement('a', '', item.title || 'Pressemitteilung');
       let url;
       try {
@@ -567,15 +601,17 @@
       }
 
       entry.append(title);
-      entry.append(createElement('div', 'meta', `${formatDisplayDate(item.date)} · ${topicForItem(item)}`));
+      entry.append(createElement('div', 'meta', `${formatDisplayDate(item.date)} · ${itemCategory(item, !this._news.some((news) => normalizeWhitespace(news.category)))}`));
       return entry;
     }
   }
 
   const api = {
     DEFAULT_CONFIG,
-    TOPICS,
+    ALL_TOPICS,
+    categoryOptions,
     PERIODS,
+    TOPICS,
     clampMaxItems,
     dateKey,
     filterNews,
