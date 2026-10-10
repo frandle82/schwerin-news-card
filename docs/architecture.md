@@ -21,7 +21,7 @@ Nicht Bestandteil der Architektur:
 5. `normalizeArticleUrl()` akzeptiert nur sichere Schwerin-News-Links und normalisiert den bekannten internen CMS-Host.
 6. `filterNews()` wendet Zeitraum, Thema und Stichwortsuche an.
 7. `categoryOptions()` erstellt die Themenauswahl aus den gelieferten Kategorien; heuristische Zuordnung wird nur als Fallback bei vollständig fehlenden Kategorien verwendet.
-8. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM.
+8. `SchwerinNewsCard` rendert Kopf, Filter, Liste und Footer im Shadow DOM; die Liste erhält eine begrenzte Höhe und einen eigenen vertikalen Scrollbereich.
 
 ## Parser-Regeln
 

@@ -27,6 +27,7 @@ Optionale Felder:
 | `max_items` | `10` | Anzahl sichtbarer Meldungen, begrenzt auf 1 bis 50 |
 | `default_open` | `false` | Karte beim Laden aufgeklappt anzeigen |
 | `refresh_minutes` | `30` | Aktualisierungsintervall, mindestens 5 Minuten |
+| `list_max_height` | `400` | Maximale Höhe der Nachrichtenliste in CSS-Pixeln; bei längeren Listen wird innerhalb der Karte gescrollt |
 | `page_url` | offizielle Pressemitteilungsseite | HTML-Quelle fuer direkte Browserabfrage |
 | `feed_url` | leer | Optionaler RSS-/Atom-Feed als bevorzugte Quelle |
 
@@ -40,6 +41,7 @@ Optionale Felder:
 - Bietet Tageszaehler, Zeitraumfilter, quellengestützte Themenfilter und Stichwortsuche.
 - Filteroptionen werden aus den tatsächlich gelieferten Kategorien gebildet; heuristische Themen erscheinen nur, wenn die Quelle keine Kategorien liefert.
 - Die Liste markiert Meldungen vom aktuellen Tag und bietet eine gut erreichbare Suche-zurücksetzen-Schaltfläche.
+- Mit `list_max_height` lässt sich die maximale Listenhöhe anpassen; der interne Scrollbereich funktioniert auch auf Touch-Geräten.
 - Nutzt Home-Assistant-Theme-Variablen fuer helle und dunkle Themes.
 - Erfindet keine fehlenden Meldungen. Wenn die Quelle nicht lesbar ist oder die HTML-Struktur nicht passt, zeigt die Karte einen Fehlerzustand.
 

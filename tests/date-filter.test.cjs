@@ -84,3 +84,10 @@ test('clampMaxItems keeps dashboard limits bounded', () => {
   assert.equal(helpers.clampMaxItems(3), 3);
   assert.equal(helpers.clampMaxItems(100), 50);
 });
+
+test('clampListMaxHeight keeps the scroll area configurable and bounded', () => {
+  assert.equal(helpers.clampListMaxHeight(), 400);
+  assert.equal(helpers.clampListMaxHeight(240), 240);
+  assert.equal(helpers.clampListMaxHeight(20), 120);
+  assert.equal(helpers.clampListMaxHeight(2000), 1200);
+});

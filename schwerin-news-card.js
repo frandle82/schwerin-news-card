@@ -8,6 +8,7 @@
     max_items: 10,
     default_open: false,
     refresh_minutes: 30,
+    list_max_height: 400,
     feed_url: '',
     page_url: DEFAULT_PAGE_URL,
   };
@@ -22,6 +23,11 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  // Keep the configurable scroll area within practical CSS pixel bounds.
+  function clampListMaxHeight(value) {
+    return Math.max(120, Math.min(1200, Number(value) || DEFAULT_CONFIG.list_max_height));
+  }
+
   function parseDocument(markup, type) {
     if (typeof DOMParser === 'undefined') {
       throw new Error('DOMParser ist nicht verfügbar.');
@@ -30,6 +36,7 @@
   }
 
   function normalizeArticleUrl(href, base) {
+    // Normalize internal article URLs to public HTTPS links.
     let url;
     try {
       url = new URL(href, base);
@@ -49,6 +56,7 @@
   }
 
   function parseDate(raw) {
+    // Parse source dates without fabricating a fallback date.
     if (typeof raw !== 'string') return null;
     const value = raw.trim();
     let year;
@@ -116,6 +124,7 @@
   }
 
   function parseHtmlNews(html, base) {
+    // Extract linked articles from the supported event-item-content markup.
     const doc = parseDocument(html, 'text/html');
     const items = new Map();
     const selectors = [
@@ -160,6 +169,7 @@
   }
 
   function parseFeedNews(xml, base) {
+    // Parse RSS and Atom entries into the same article shape as HTML data.
     const doc = parseDocument(xml, 'application/xml');
     if (doc.querySelector('parsererror')) throw new Error('Ungültiger RSS-/Atom-Feed.');
 
@@ -225,6 +235,7 @@
   }
 
   async function fetchText(url, base) {
+    // Fetch source content directly with a bounded request lifetime.
     const parsed = new URL(url, base);
     if (parsed.protocol !== 'https:') throw new Error('Nur HTTPS-Quellen sind erlaubt.');
 
@@ -240,6 +251,7 @@
   }
 
   async function loadNews(config) {
+    // Try the configured feed, page HTML, and discovered feed in that order.
     const failures = [];
     const pageUrl = config.page_url || DEFAULT_PAGE_URL;
 
@@ -285,6 +297,7 @@
   }
 
   function topicForItem(item) {
+    // Prefer source categories and use title heuristics only as a fallback.
     const category = normalizeWhitespace(item.category);
     if (category) return category;
 
@@ -324,6 +337,7 @@
   }
 
   function filterNews(items, filters, now = new Date()) {
+    // Apply date, category, and keyword filters.
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (filters.period === 'Letzte 7 Tage') start.setDate(start.getDate() - 6);
     if (filters.period === 'Letzte 30 Tage') start.setDate(start.getDate() - 29);
@@ -375,6 +389,7 @@
     .meta {color:var(--secondary-text-color);font-size:11px;margin:5px 0 4px;}
     .notice {font-size:13px;color:var(--secondary-text-color);padding:12px 0;}
     .footer {font-size:11px;color:var(--secondary-text-color);padding:10px 0 0;border-top:1px solid var(--divider-color,#ddd);}
+    .news-list {max-height:var(--news-list-max-height,400px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;}
     button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:2px;}
     @media(max-width:420px){ .filters {grid-template-columns:1fr;} }
   `;
@@ -396,6 +411,7 @@
     }
 
     setConfig(config) {
+      // Apply compatible defaults before the first render.
       this._config = { ...DEFAULT_CONFIG, ...config };
       this._expanded = Boolean(this._config.default_open);
       this._news = [];
@@ -428,6 +444,7 @@
     }
 
     _start() {
+      // Refresh only while the card is connected to the dashboard.
       if (this._timer) clearInterval(this._timer);
       this._load();
       const minutes = Math.max(5, Number(this._config.refresh_minutes) || DEFAULT_CONFIG.refresh_minutes);
@@ -435,6 +452,7 @@
     }
 
     async _load() {
+      // Ignore responses from requests superseded by a newer refresh.
       const id = ++this._requestId;
       try {
         const result = await loadNews(this._config);
@@ -452,6 +470,7 @@
     }
 
     _render() {
+      // Rebuild the shadow DOM from current state after every interaction.
       if (!this._config) return;
 
       const root = this.shadowRoot;
@@ -459,6 +478,7 @@
       root.append(createElement('style', '', styles));
 
       const card = createElement('ha-card');
+      card.style.setProperty('--news-list-max-height', `${clampListMaxHeight(this._config.list_max_height)}px`);
       root.append(card);
       const todayCount = this._news.filter((item) => {
         const date = parseDate(item.date);
@@ -489,6 +509,7 @@
       headingBox.append(createElement('div', 'sub', subtitle));
       header.append(headingBox, createElement('span', 'arrow', this._expanded ? '▴' : '▾'));
       header.addEventListener('click', () => {
+        // Toggle the compact header without changing the dashboard config.
         this._expanded = !this._expanded;
         this._render();
       });
@@ -520,7 +541,7 @@
       }));
       filters.append(this._renderSearchInput());
 
-      const list = createElement('div');
+      const list = createElement('div', 'news-list');
       const footer = createElement('div', 'footer');
       body.append(list, footer);
       this._renderEntries(list, footer);
@@ -566,6 +587,7 @@
     }
 
     _renderEntries(list, footer) {
+      // Limit the visible list height and enable vertical scrolling.
       list.replaceChildren();
       const max = clampMaxItems(this._config.max_items);
       const filtered = filterNews(this._news, {
@@ -610,6 +632,7 @@
     DEFAULT_CONFIG,
     ALL_TOPICS,
     categoryOptions,
+    clampListMaxHeight,
     PERIODS,
     TOPICS,
     clampMaxItems,
