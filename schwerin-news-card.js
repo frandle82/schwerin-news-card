@@ -1,4 +1,4 @@
-/* Schwerin News Card v1.2.0 — direct RSS loading (CORS required) */
+/* Schwerin News Card v1.3.0 — direct RSS loading (CORS required) */
 class SchwerinNewsCard extends HTMLElement {
   constructor() {
     super();
@@ -92,47 +92,68 @@ class SchwerinNewsCard extends HTMLElement {
       if (id !== this._requestId || !this.isConnected) return;
       this._status = this._news.length ? 'stale' : 'error';
       this._error = String(err?.message || err) +
-        ' — Bei „Failed to fetch“ oder „Load failed“ bitte in der Browser-Konsole auf CORS prüfen. Ohne CORS-Freigabe ist ein direkter Browserabruf nicht möglich.';
+        ' — Wenn der Browserabruf HTTP 200 liefert, bitte die HTML-Struktur prüfen.';
     }
     this._render();
   }
 
+  // The Schwerin CMS currently publishes internal http://10.1.1.252/news/...
+  // links in its HTML. Convert only this known origin to the public website.
+  _publicArticleUrl(href, base) {
+    let url;
+    try { url = new URL(href, base); } catch { return ''; }
+    if (url.hostname === '10.1.1.252' && url.protocol === 'http:') {
+      url.protocol = 'https:';
+      url.hostname = 'www.schwerin.de';
+      url.port = '';
+    }
+    if (url.protocol !== 'https:' || !/(^|\.)schwerin\.de$/i.test(url.hostname)) return '';
+    if (!url.pathname.startsWith('/news/')) return '';
+    return url.href;
+  }
+
   _parseHtml(html, base) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const pattern = /(?:^|\s)(\d{2})\.(\d{2})\.(20\d{2})(?:\s|$)/;
+    const pattern = /\b(\d{2})\.(\d{2})\.(20\d{2})\b/;
     const items = new Map();
-    const headings = doc.querySelectorAll('h2, h3, h4');
-    for (const heading of headings) {
-      const anchor = heading.querySelector('a[href]');
-      if (!anchor) continue;
-      const title = anchor.textContent.replace(/\s+/g, ' ').trim();
-      if (title.length < 12 || /^alles lesen/i.test(title)) continue;
-      let url;
-      try { url = new URL(anchor.getAttribute('href'), base); }
-      catch { continue; }
-      if (url.protocol !== 'https:' || !/(^|\.)schwerin\.de$/i.test(url.hostname) ||
-          !url.pathname.includes('/pressemitteilungen/') || url.pathname === new URL(base).pathname) continue;
-      // Publication metadata is commonly a sibling directly before the headline.
-      const blocks = [];
-      let node = heading;
-      for (let depth = 0; depth < 3; depth++) {
-        let prev = node.previousElementSibling;
-        for (let i = 0; prev && i < 4; i++, prev = prev.previousElementSibling) {
-          blocks.push((prev.textContent || '').replace(/\s+/g, ' ').trim().slice(-400));
+    // Confirmed on the live page: headlines are inside .event-item-content.
+    const headlines = doc.querySelectorAll('.event-item-content h2 a[href], .event-item-content h3 a[href], .event-item-content h4 a[href]');
+    for (const anchor of headlines) {
+      const title = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+      if (title.length < 8) continue;
+      const url = this._publicArticleUrl(anchor.getAttribute('href'), base);
+      if (!url) continue;
+
+      const content = anchor.closest('.event-item-content');
+      if (!content) continue;
+      // The date/category may precede .event-item-content in its enclosing item.
+      let block = content;
+      let dateMatch = null;
+      let metadata = '';
+      for (let depth = 0; depth < 4 && block; depth++, block = block.parentElement) {
+        const candidates = [];
+        let preceding = block.previousElementSibling;
+        for (let n = 0; preceding && n < 4; n++, preceding = preceding.previousElementSibling) {
+          candidates.push((preceding.textContent || '').replace(/\s+/g, ' ').trim().slice(0,350));
         }
-        node = node.parentElement;
-        if (!node || node === doc.body) break;
+        const own = (block.textContent || '').replace(/\s+/g, ' ').trim();
+        candidates.push(own.slice(0,250));
+        const found = candidates.find(text => pattern.test(text));
+        if (found) {
+          metadata = found;
+          dateMatch = found.match(pattern);
+          break;
+        }
       }
-      const vicinity = blocks.join(' ');
-      const dateMatch = vicinity.match(pattern);
       if (!dateMatch) continue;
       const date = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
-      // The closest matching metadata block supplies the publisher's category.
-      const meta = blocks.find(x => pattern.test(x)) || '';
-      const category = meta.replace(pattern, '').replace(/Alles lesen\.\.\./gi, '').trim().slice(0,100);
-      const parent = heading.parentElement;
-      const description = (parent?.querySelector('p')?.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
-      items.set(url.href, {title, url:url.href, date, category, description});
+      // Only take text immediately before a date for a possible official category.
+      let category = (metadata.split(dateMatch[0])[0] || '').trim();
+      category = category.replace(/^(?:Pressemitteilungen|News|Aktuelles)\s*/i, '').slice(-100);
+      if (category.length > 80 || category.includes(title.slice(0,18))) category = '';
+      const summary = content.querySelector('p');
+      const description = (summary?.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
+      if (!items.has(url)) items.set(url, {title, url, date, category, description});
     }
     return [...items.values()].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,120);
   }
