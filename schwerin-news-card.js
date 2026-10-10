@@ -1,4 +1,4 @@
-/* Schwerin News Card v1.3.0 — direct RSS loading (CORS required) */
+/* Schwerin News Card v0.1.0 — direct website loading (CORS required) */
 class SchwerinNewsCard extends HTMLElement {
   constructor() {
     super();
@@ -219,6 +219,11 @@ class SchwerinNewsCard extends HTMLElement {
     return (date.getFullYear()===y && date.getMonth()===m-1 && date.getDate()===d) ? date : null;
   }
 
+  _displayDate(raw) {
+    const date = this._parseDate(raw);
+    return date ? `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}` : 'Ohne Datum';
+  }
+
   _topic(item) {
     const official = String(item.category || '').toLocaleLowerCase('de');
     if (/verkehr|ordnung|sicherheit/.test(official)) return 'Verkehr';
@@ -226,7 +231,7 @@ class SchwerinNewsCard extends HTMLElement {
     if (/politik|verwaltung/.test(official)) return 'Politik & Verwaltung';
     if (/kultur|veranstaltung/.test(official)) return 'Kultur & Veranstaltungen';
     if (/bau|stadtentwicklung|wohnen/.test(official)) return 'Bauen & Stadtentwicklung';
-    const text = `${item.title || ''} ${item.description || ''}`.toLocaleLowerCase('de');
+    const text = `${item.title || ''}`.toLocaleLowerCase('de');
     const groups = [
       ['Verkehr', /verkehr|baustell|straßen|strassen|sperrung|bus|bahn|parkpl[aä]tz|radweg|br[uü]ck/],
       ['Bildung', /schul|bildung|kita|kindergarten|jugend|unterricht|bibliothek/],
@@ -340,7 +345,7 @@ class SchwerinNewsCard extends HTMLElement {
       if (this._period==='Heute' && (!date || this._dateKey(date)!==today)) return false;
       if (this._period!=='Alle' && this._period!=='Heute' && (!date || date < start || date > now)) return false;
       if (this._category!=='Alle Themen' && this._topic(item)!==this._category) return false;
-      return `${item.title||''} ${item.description||''}`.toLocaleLowerCase('de').includes(needle);
+      return `${item.title||''}`.toLocaleLowerCase('de').includes(needle);
     }).sort((a,b)=>(this._parseDate(b.date)?.getTime()||0)-(this._parseDate(a.date)?.getTime()||0));
     const max=Math.max(1,Math.min(50,Number(this._config.max_items)||10));
     if (!filtered.length) list.append(this._el('div','notice','Keine passenden Meldungen gefunden.'));
@@ -353,8 +358,7 @@ class SchwerinNewsCard extends HTMLElement {
         title.href=url.href;title.target='_blank';title.rel='noopener noreferrer';
       } else { title.removeAttribute('href'); }
       entry.append(title);
-      entry.append(this._el('div','meta',`${item.date || 'Ohne Datum'} · ${this._topic(item)}`));
-      entry.append(this._el('div','desc',item.description || 'Keine Kurzbeschreibung verfügbar.'));
+      entry.append(this._el('div','meta',`${this._displayDate(item.date)} · ${this._topic(item)}`));
       list.append(entry);
     }
     footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} aus ${this._source || "Quelle"} geladen`;
