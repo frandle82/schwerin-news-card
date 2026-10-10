@@ -1,0 +1,78 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const { loadCard } = require('./helpers/load-card.cjs');
+
+const helpers = loadCard();
+
+const news = [
+  {
+    title: 'Neue Verkehrsregelung am Markt',
+    url: 'https://www.schwerin.de/news/verkehr/',
+    date: '2026-10-10',
+    category: 'Verkehr',
+  },
+  {
+    title: 'Schule startet neues Projekt',
+    url: 'https://www.schwerin.de/news/schule/',
+    date: '2026-10-04',
+    category: 'Bildung',
+  },
+  {
+    title: 'Theater zeigt Premiere',
+    url: 'https://www.schwerin.de/news/theater/',
+    date: '2026-09-15',
+    category: '',
+  },
+];
+
+test('parseDate accepts German and ISO dates and rejects impossible values', () => {
+  assert.equal(helpers.formatDisplayDate('2026-10-10'), '10.10.2026');
+  assert.equal(helpers.formatDisplayDate('10.10.2026'), '10.10.2026');
+  assert.equal(helpers.parseDate('31.02.2026'), null);
+  assert.equal(helpers.formatDisplayDate(''), 'Ohne Datum');
+});
+
+test('normalizeArticleUrl allows only Schwerin news URLs and rewrites known CMS host', () => {
+  assert.equal(
+    helpers.normalizeArticleUrl('http://10.1.1.252/news/interner-link/', 'https://www.schwerin.de/'),
+    'https://www.schwerin.de/news/interner-link/',
+  );
+  assert.equal(
+    helpers.normalizeArticleUrl('/news/oeffentlich/', 'https://www.schwerin.de/presse/'),
+    'https://www.schwerin.de/news/oeffentlich/',
+  );
+  assert.equal(helpers.normalizeArticleUrl('http://www.schwerin.de/news/unsicher/', 'https://www.schwerin.de/'), '');
+  assert.equal(helpers.normalizeArticleUrl('https://example.org/news/fremd/', 'https://www.schwerin.de/'), '');
+  assert.equal(helpers.normalizeArticleUrl('https://www.schwerin.de/presse/', 'https://www.schwerin.de/'), '');
+});
+
+test('filterNews applies period, topic and keyword filters', () => {
+  const now = new Date(2026, 9, 10, 12, 0, 0);
+
+  assert.deepEqual(
+    helpers.filterNews(news, { period: 'Heute', category: 'Alle Themen', search: '' }, now)
+      .map((item) => item.title),
+    ['Neue Verkehrsregelung am Markt'],
+  );
+  assert.deepEqual(
+    helpers.filterNews(news, { period: 'Letzte 7 Tage', category: 'Alle Themen', search: '' }, now)
+      .map((item) => item.title),
+    ['Neue Verkehrsregelung am Markt', 'Schule startet neues Projekt'],
+  );
+  assert.deepEqual(
+    helpers.filterNews(news, { period: 'Alle', category: 'Bildung', search: 'projekt' }, now)
+      .map((item) => item.title),
+    ['Schule startet neues Projekt'],
+  );
+  assert.deepEqual(
+    helpers.filterNews(news, { period: 'Alle', category: 'Kultur & Veranstaltungen', search: '' }, now)
+      .map((item) => item.title),
+    ['Theater zeigt Premiere'],
+  );
+});
+
+test('clampMaxItems keeps dashboard limits bounded', () => {
+  assert.equal(helpers.clampMaxItems(0), 10);
+  assert.equal(helpers.clampMaxItems(3), 3);
+  assert.equal(helpers.clampMaxItems(100), 50);
+});

@@ -1,0 +1,12 @@
+{
+  "name": "schwerin-news-card",
+  "version": "0.1.1",
+  "description": "Home Assistant Lovelace custom card for Schwerin press releases.",
+  "private": true,
+  "scripts": {
+    "check:syntax": "node --check schwerin-news-card.js",
+    "test": "node --test",
+    "validate:hacs": "node tests/validate-hacs.test.cjs",
+    "ci": "npm run check:syntax && npm test && npm run validate:hacs"
+  }
+}
