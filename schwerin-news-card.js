@@ -1,237 +1,304 @@
-/* Schwerin News Card v0.1.0 — direct website loading (CORS required) */
-class SchwerinNewsCard extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this._expanded = false;
-    this._period = 'Alle';
-    this._category = 'Alle Themen';
-    this._search = '';
-    this._lastSignature = null;
-    this._news = [];
-    this._status = "loading";
-    this._error = "";
-    this._timer = null;
-    this._requestId = 0;
+/* Schwerin News Card v0.1.1 - direct website loading (CORS required) */
+(function initSchwerinNewsCard(global) {
+  'use strict';
+
+  const DEFAULT_PAGE_URL = 'https://www.schwerin.de/politik-verwaltung/stadtverwaltung/pressestelle/pressemitteilungen/';
+  const DEFAULT_CONFIG = {
+    title: 'Schwerin – Pressemitteilungen',
+    max_items: 10,
+    default_open: false,
+    refresh_minutes: 30,
+    feed_url: '',
+    page_url: DEFAULT_PAGE_URL,
+  };
+  const TOPICS = [
+    'Alle Themen',
+    'Verkehr',
+    'Bildung',
+    'Politik & Verwaltung',
+    'Kultur & Veranstaltungen',
+    'Bauen & Stadtentwicklung',
+    'Sonstiges',
+  ];
+  const PERIODS = ['Alle', 'Heute', 'Letzte 7 Tage', 'Letzte 30 Tage'];
+  const DATE_PATTERN = /\b(\d{2})\.(\d{2})\.(20\d{2})\b/;
+  const PUBLIC_HOST_PATTERN = /(^|\.)schwerin\.de$/i;
+
+  function normalizeWhitespace(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
-  setConfig(config) {
-    this._config = {
-      title: 'Schwerin – Pressemitteilungen',
-      max_items: 10,
-      default_open: false,
-      refresh_minutes: 30,
-      feed_url: '',
-      page_url: 'https://www.schwerin.de/politik-verwaltung/stadtverwaltung/pressestelle/pressemitteilungen/',
-      ...config,
-    };
-    this._expanded = Boolean(this._config.default_open);
-    this._news = [];
-    this._status = 'loading';
-    this._error = '';
-    this._render();
-    if (this.isConnected) this._start();
-  }
-
-  set hass(value) { this._hass = value; }
-  connectedCallback() { if (this._config) this._start(); }
-  disconnectedCallback() {
-    if (this._timer) clearInterval(this._timer);
-    this._timer = null;
-    this._requestId++;
-  }
-  _start() {
-    if (this._timer) clearInterval(this._timer);
-    this._load();
-    const mins = Math.max(5, Number(this._config.refresh_minutes) || 30);
-    this._timer = setInterval(() => this._load(), mins * 60000);
-  }
-
-  async _load() {
-    const id = ++this._requestId;
-    const failures = [];
-    let news = [];
-    let source = '';
-    const pageUrl = this._config.page_url;
-    try {
-      // Explicit RSS URL avoids fetching the HTML index first.
-      if (this._config.feed_url) {
-        const url = new URL(this._config.feed_url, pageUrl).href;
-        try { news = this._parseFeed(await this._fetchText(url), url); source = 'RSS'; }
-        catch (e) { failures.push(`RSS: ${e.message}`); }
-      }
-      if (!news.length) {
-        let html = '';
-        try { html = await this._fetchText(pageUrl); }
-        catch (e) { failures.push(`Webseite: ${e.message}`); }
-        if (html) {
-          try { news = this._parseHtml(html, pageUrl); source = 'Webseite'; }
-          catch (e) { failures.push(`HTML: ${e.message}`); }
-          if (!news.length && !this._config.feed_url) {
-            const dom = new DOMParser().parseFromString(html, 'text/html');
-            const feedLink = Array.from(dom.querySelectorAll('a[href],link[href]')).find(el =>
-              /rss|pressemitteilungen abonnieren/i.test(
-                [el.getAttribute('href'), el.getAttribute('type'), el.textContent].join(' '))
-            );
-            if (feedLink) {
-              try {
-                const url = new URL(feedLink.getAttribute('href'), pageUrl).href;
-                news = this._parseFeed(await this._fetchText(url), url); source = 'RSS';
-              } catch (e) { failures.push(`RSS-Erkennung: ${e.message}`); }
-            }
-          }
-        }
-      }
-      if (!news.length) throw new Error(failures.join(' | ') || 'Keine Pressemitteilungen auf der Quellseite erkannt.');
-      if (id !== this._requestId || !this.isConnected) return;
-      this._news = news;
-      this._source = source;
-      this._status = 'ok';
-      this._error = '';
-    } catch (err) {
-      if (id !== this._requestId || !this.isConnected) return;
-      this._status = this._news.length ? 'stale' : 'error';
-      this._error = String(err?.message || err) +
-        ' — Wenn der Browserabruf HTTP 200 liefert, bitte die HTML-Struktur prüfen.';
+  function parseDocument(markup, type) {
+    if (typeof DOMParser === 'undefined') {
+      throw new Error('DOMParser ist nicht verfügbar.');
     }
-    this._render();
+    return new DOMParser().parseFromString(markup, type);
   }
 
-  // The Schwerin CMS currently publishes internal http://10.1.1.252/news/...
-  // links in its HTML. Convert only this known origin to the public website.
-  _publicArticleUrl(href, base) {
+  function normalizeArticleUrl(href, base) {
     let url;
-    try { url = new URL(href, base); } catch { return ''; }
+    try {
+      url = new URL(href, base);
+    } catch {
+      return '';
+    }
+
     if (url.hostname === '10.1.1.252' && url.protocol === 'http:') {
       url.protocol = 'https:';
       url.hostname = 'www.schwerin.de';
       url.port = '';
     }
-    if (url.protocol !== 'https:' || !/(^|\.)schwerin\.de$/i.test(url.hostname)) return '';
+
+    if (url.protocol !== 'https:' || !PUBLIC_HOST_PATTERN.test(url.hostname)) return '';
     if (!url.pathname.startsWith('/news/')) return '';
     return url.href;
   }
 
-  _parseHtml(html, base) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const pattern = /\b(\d{2})\.(\d{2})\.(20\d{2})\b/;
+  function parseDate(raw) {
+    if (typeof raw !== 'string') return null;
+    const value = raw.trim();
+    let year;
+    let month;
+    let day;
+    let match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value);
+
+    if (match) {
+      day = Number(match[1]);
+      month = Number(match[2]);
+      year = Number(match[3]);
+    } else {
+      match = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(value);
+      if (!match) return null;
+      year = Number(match[1]);
+      month = Number(match[2]);
+      day = Number(match[3]);
+    }
+
+    const date = new Date(year, month - 1, day);
+    return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+  }
+
+  function dateKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function formatDisplayDate(raw) {
+    const date = parseDate(raw);
+    if (!date) return 'Ohne Datum';
+    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`;
+  }
+
+  function isoDateFromGermanMatch(match) {
+    return `${match[3]}-${match[2]}-${match[1]}`;
+  }
+
+  function isoDateFromDate(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function extractCategory(metadata, dateText, title) {
+    let category = (metadata.split(dateText)[0] || '').trim();
+    category = category.replace(/^(?:Pressemitteilungen|News|Aktuelles)\s*/i, '').slice(-100).trim();
+    if (category.length > 80 || category.includes(title.slice(0, 18))) return '';
+    return category;
+  }
+
+  function findDateMetadata(content) {
+    let block = content;
+    for (let depth = 0; depth < 4 && block; depth += 1, block = block.parentElement) {
+      const candidates = [];
+      let preceding = block.previousElementSibling;
+      for (let index = 0; preceding && index < 4; index += 1, preceding = preceding.previousElementSibling) {
+        candidates.push(normalizeWhitespace(preceding.textContent).slice(0, 350));
+      }
+      candidates.push(normalizeWhitespace(block.textContent).slice(0, 250));
+
+      const metadata = candidates.find((text) => DATE_PATTERN.test(text));
+      if (metadata) {
+        return { metadata, match: metadata.match(DATE_PATTERN) };
+      }
+    }
+    return null;
+  }
+
+  function parseHtmlNews(html, base) {
+    const doc = parseDocument(html, 'text/html');
     const items = new Map();
-    // Confirmed on the live page: headlines are inside .event-item-content.
-    const headlines = doc.querySelectorAll('.event-item-content h2 a[href], .event-item-content h3 a[href], .event-item-content h4 a[href]');
-    for (const anchor of headlines) {
-      const title = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+    const selectors = [
+      '.event-item-content h2 a[href]',
+      '.event-item-content h3 a[href]',
+      '.event-item-content h4 a[href]',
+    ].join(', ');
+
+    for (const anchor of doc.querySelectorAll(selectors)) {
+      const title = normalizeWhitespace(anchor.textContent);
       if (title.length < 8) continue;
-      const url = this._publicArticleUrl(anchor.getAttribute('href'), base);
+
+      const url = normalizeArticleUrl(anchor.getAttribute('href'), base);
       if (!url) continue;
 
       const content = anchor.closest('.event-item-content');
       if (!content) continue;
-      // The date/category may precede .event-item-content in its enclosing item.
-      let block = content;
-      let dateMatch = null;
-      let metadata = '';
-      for (let depth = 0; depth < 4 && block; depth++, block = block.parentElement) {
-        const candidates = [];
-        let preceding = block.previousElementSibling;
-        for (let n = 0; preceding && n < 4; n++, preceding = preceding.previousElementSibling) {
-          candidates.push((preceding.textContent || '').replace(/\s+/g, ' ').trim().slice(0,350));
-        }
-        const own = (block.textContent || '').replace(/\s+/g, ' ').trim();
-        candidates.push(own.slice(0,250));
-        const found = candidates.find(text => pattern.test(text));
-        if (found) {
-          metadata = found;
-          dateMatch = found.match(pattern);
-          break;
-        }
+
+      const dateMetadata = findDateMetadata(content);
+      if (!dateMetadata?.match) continue;
+
+      const date = isoDateFromGermanMatch(dateMetadata.match);
+      const category = extractCategory(dateMetadata.metadata, dateMetadata.match[0], title);
+
+      if (!items.has(url)) {
+        items.set(url, { title, url, date, category });
       }
-      if (!dateMatch) continue;
-      const date = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
-      // Only take text immediately before a date for a possible official category.
-      let category = (metadata.split(dateMatch[0])[0] || '').trim();
-      category = category.replace(/^(?:Pressemitteilungen|News|Aktuelles)\s*/i, '').slice(-100);
-      if (category.length > 80 || category.includes(title.slice(0,18))) category = '';
-      const summary = content.querySelector('p');
-      const description = (summary?.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
-      if (!items.has(url)) items.set(url, {title, url, date, category, description});
     }
-    return [...items.values()].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,120);
+
+    return [...items.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120);
   }
 
-  async _fetchText(url) {
-    const parsed = new URL(url, this._config.page_url);
+  function getXmlChildText(node, tag) {
+    const normalizedTag = tag.toLocaleLowerCase('en');
+    const child = Array.from(node.children).find((element) => element.localName.toLocaleLowerCase('en') === normalizedTag);
+    return child?.textContent?.trim() || '';
+  }
+
+  function textFromHtml(value) {
+    const fragment = parseDocument(value || '', 'text/html');
+    return normalizeWhitespace(fragment.body.textContent).slice(0, 260);
+  }
+
+  function parseFeedNews(xml, base) {
+    const doc = parseDocument(xml, 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('Ungültiger RSS-/Atom-Feed.');
+
+    return Array.from(doc.querySelectorAll('item, entry'))
+      .map((entry) => {
+        const title = getXmlChildText(entry, 'title');
+        const linkTag = Array.from(entry.children).find((element) => {
+          return element.localName === 'link' && (!element.getAttribute('rel') || element.getAttribute('rel') === 'alternate');
+        });
+        const link = linkTag?.getAttribute('href') || getXmlChildText(entry, 'link');
+        const dateRaw = getXmlChildText(entry, 'pubDate') ||
+          getXmlChildText(entry, 'published') ||
+          getXmlChildText(entry, 'updated') ||
+          getXmlChildText(entry, 'date');
+        const parsed = new Date(dateRaw);
+        const date = Number.isNaN(parsed.valueOf()) ? '' : isoDateFromDate(parsed);
+        let url = '';
+
+        try {
+          const candidate = new URL(link, base);
+          if (candidate.protocol === 'https:' && PUBLIC_HOST_PATTERN.test(candidate.hostname)) {
+            url = candidate.href;
+          }
+        } catch {
+          url = '';
+        }
+
+        return {
+          title,
+          url,
+          date,
+          category: getXmlChildText(entry, 'category'),
+          description: textFromHtml(
+            getXmlChildText(entry, 'description') ||
+            getXmlChildText(entry, 'summary') ||
+            getXmlChildText(entry, 'encoded') ||
+            getXmlChildText(entry, 'content'),
+          ),
+        };
+      })
+      .filter((item) => item.title && item.url)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 100);
+  }
+
+  function findFeedUrl(html, base) {
+    const doc = parseDocument(html, 'text/html');
+    const feedLink = Array.from(doc.querySelectorAll('a[href],link[href]')).find((element) => {
+      return /rss|pressemitteilungen abonnieren/i.test([
+        element.getAttribute('href'),
+        element.getAttribute('type'),
+        element.textContent,
+      ].join(' '));
+    });
+    if (!feedLink) return '';
+
+    try {
+      const url = new URL(feedLink.getAttribute('href'), base);
+      return url.protocol === 'https:' ? url.href : '';
+    } catch {
+      return '';
+    }
+  }
+
+  async function fetchText(url, base) {
+    const parsed = new URL(url, base);
     if (parsed.protocol !== 'https:') throw new Error('Nur HTTPS-Quellen sind erlaubt.');
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(parsed.href, {signal:controller.signal, credentials:'omit'});
+      const response = await fetch(parsed.href, { signal: controller.signal, credentials: 'omit' });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${parsed.hostname}`);
       return await response.text();
-    } finally { clearTimeout(timeout); }
-  }
-
-  _parseFeed(xml, base) {
-    const doc = new DOMParser().parseFromString(xml, 'application/xml');
-    if (doc.querySelector('parsererror')) throw new Error('Ungültiger RSS-/Atom-Feed.');
-    const entries = Array.from(doc.querySelectorAll('item, entry'));
-    const get = (node, tag) => {
-      const child = Array.from(node.children).find(el => el.localName === tag);
-      return child?.textContent?.trim() || '';
-    };
-    const clean = value => {
-      const fragment = new DOMParser().parseFromString(value || '', 'text/html');
-      return (fragment.body.textContent || '').replace(/\s+/g,' ').trim().slice(0,260);
-    };
-    const items = entries.map(el => {
-      const title = get(el,'title');
-      const linkTag = Array.from(el.children).find(x => x.localName === 'link' && (!x.getAttribute('rel') || x.getAttribute('rel') === 'alternate'));
-      const link = linkTag?.getAttribute('href') || get(el,'link');
-      const dateRaw = get(el,'pubDate') || get(el,'published') || get(el,'updated') || get(el,'date');
-      const parsed = new Date(dateRaw);
-      const date = Number.isNaN(parsed.valueOf()) ? '' : `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
-      let url = '';
-      try { const u = new URL(link, base); if (u.protocol === 'https:') url = u.href; } catch {}
-      const description = clean(get(el,'description') || get(el,'summary') || get(el,'encoded') || get(el,'content'));
-      return {title, url, date, description, category:get(el,'category')};
-    }).filter(x => x.title && x.url);
-    return items.sort((a,b) => b.date.localeCompare(a.date)).slice(0,100);
-  }
-
-  getCardSize() { return this._expanded ? 7 : 2; }
-  getGridOptions() { return {columns: 12, min_columns: 4, rows: this._expanded ? 7 : 2, min_rows: 2}; }
-
-  _dateKey(date) {
-    return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-  }
-
-  _parseDate(raw) {
-    if (typeof raw !== 'string') return null;
-    const value = raw.trim();
-    let y, m, d;
-    let match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value);
-    if (match) { d=+match[1]; m=+match[2]; y=+match[3]; }
-    else {
-      match = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(value);
-      if (!match) return null;
-      y=+match[1]; m=+match[2]; d=+match[3];
+    } finally {
+      clearTimeout(timeout);
     }
-    const date = new Date(y, m-1, d);
-    return (date.getFullYear()===y && date.getMonth()===m-1 && date.getDate()===d) ? date : null;
   }
 
-  _displayDate(raw) {
-    const date = this._parseDate(raw);
-    return date ? `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}` : 'Ohne Datum';
+  async function loadNews(config) {
+    const failures = [];
+    const pageUrl = config.page_url || DEFAULT_PAGE_URL;
+
+    if (config.feed_url) {
+      const feedUrl = new URL(config.feed_url, pageUrl).href;
+      try {
+        const news = parseFeedNews(await fetchText(feedUrl, pageUrl), feedUrl);
+        if (news.length) return { news, source: 'RSS' };
+      } catch (error) {
+        failures.push(`RSS: ${error.message}`);
+      }
+    }
+
+    let html = '';
+    try {
+      html = await fetchText(pageUrl, pageUrl);
+    } catch (error) {
+      failures.push(`Webseite: ${error.message}`);
+    }
+
+    if (html) {
+      try {
+        const news = parseHtmlNews(html, pageUrl);
+        if (news.length) return { news, source: 'Webseite' };
+      } catch (error) {
+        failures.push(`HTML: ${error.message}`);
+      }
+
+      if (!config.feed_url) {
+        const feedUrl = findFeedUrl(html, pageUrl);
+        if (feedUrl) {
+          try {
+            const news = parseFeedNews(await fetchText(feedUrl, pageUrl), feedUrl);
+            if (news.length) return { news, source: 'RSS' };
+          } catch (error) {
+            failures.push(`RSS-Erkennung: ${error.message}`);
+          }
+        }
+      }
+    }
+
+    throw new Error(failures.join(' | ') || 'Keine Pressemitteilungen auf der Quellseite erkannt.');
   }
 
-  _topic(item) {
+  function topicForItem(item) {
     const official = String(item.category || '').toLocaleLowerCase('de');
     if (/verkehr|ordnung|sicherheit/.test(official)) return 'Verkehr';
     if (/bildung|schule|jugend|familie/.test(official)) return 'Bildung';
     if (/politik|verwaltung/.test(official)) return 'Politik & Verwaltung';
     if (/kultur|veranstaltung/.test(official)) return 'Kultur & Veranstaltungen';
     if (/bau|stadtentwicklung|wohnen/.test(official)) return 'Bauen & Stadtentwicklung';
-    const text = `${item.title || ''}`.toLocaleLowerCase('de');
+
+    const title = String(item.title || '').toLocaleLowerCase('de');
     const groups = [
       ['Verkehr', /verkehr|baustell|straßen|strassen|sperrung|bus|bahn|parkpl[aä]tz|radweg|br[uü]ck/],
       ['Bildung', /schul|bildung|kita|kindergarten|jugend|unterricht|bibliothek/],
@@ -239,131 +306,303 @@ class SchwerinNewsCard extends HTMLElement {
       ['Kultur & Veranstaltungen', /veranstaltung|konzert|kultur|museum|theater|festival|fest|ausstellung/],
       ['Bauen & Stadtentwicklung', /wohn|bauprojekt|stadtentwicklung|sanierung|quartier|bebauungsplan/],
     ];
-    return (groups.find(([, re]) => re.test(text)) || ['Sonstiges'])[0];
+    return (groups.find(([, pattern]) => pattern.test(title)) || ['Sonstiges'])[0];
   }
 
-  _el(tag, className, value) {
-    const el = document.createElement(tag);
-    if (className) el.className = className;
-    if (value !== undefined && value !== null) el.textContent = String(value);
-    return el;
+  function filterNews(items, filters, now = new Date()) {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (filters.period === 'Letzte 7 Tage') start.setDate(start.getDate() - 6);
+    if (filters.period === 'Letzte 30 Tage') start.setDate(start.getDate() - 29);
+
+    const today = dateKey(now);
+    const needle = String(filters.search || '').trim().toLocaleLowerCase('de');
+
+    return items
+      .filter((item) => {
+        const date = parseDate(item.date);
+        if (filters.period === 'Heute' && (!date || dateKey(date) !== today)) return false;
+        if (filters.period !== 'Alle' && filters.period !== 'Heute' && (!date || date < start || date > now)) return false;
+        if (filters.category !== 'Alle Themen' && topicForItem(item) !== filters.category) return false;
+        return String(item.title || '').toLocaleLowerCase('de').includes(needle);
+      })
+      .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0));
   }
 
-  _items() {
-    const entity = this._hass?.states?.[this._config?.entity];
-    return this._news;
+  function clampMaxItems(value) {
+    return Math.max(1, Math.min(50, Number(value) || DEFAULT_CONFIG.max_items));
   }
 
-  _render() {
-    if (!this._config) return;
-    const root = this.shadowRoot;
-    root.replaceChildren();
-    const style = this._el('style');
-    style.textContent = `
-      :host { display:block; color:var(--primary-text-color); }
-      ha-card { display:block; overflow:hidden; }
-      .header {width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;font:inherit;box-sizing:border-box;}
-      .heading {font-size:16px;font-weight:650;line-height:1.35;}
-      .sub {font-size:12px;color:var(--secondary-text-color);margin-top:4px;}
-      .arrow {font-size:18px;color:var(--secondary-text-color);flex-shrink:0;}
-      .body {padding:0 18px 12px;}
-      .filters {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px;}
-      select,input {width:100%;box-sizing:border-box;min-width:0;background:var(--card-background-color, var(--ha-card-background, #fff));color:var(--primary-text-color);border:1px solid var(--divider-color,#ddd);border-radius:9px;padding:9px;font:inherit;font-size:13px;}
-      input {grid-column:1 / -1;}
-      .entry {padding:12px 0;border-top:1px solid var(--divider-color,#ddd);}
-      .entry a {color:var(--primary-text-color);font-size:14px;font-weight:600;text-decoration:none;line-height:1.4;}
-      .entry a:hover {color:var(--primary-color);text-decoration:underline;}
-      .meta {color:var(--secondary-text-color);font-size:11px;margin:5px 0 4px;}
-      .desc {font-size:12px;line-height:1.5;color:var(--secondary-text-color);white-space:normal;}
-      .notice {font-size:13px;color:var(--secondary-text-color);padding:12px 0;}
-      .footer {font-size:11px;color:var(--secondary-text-color);padding:10px 0 0;border-top:1px solid var(--divider-color,#ddd);}
-      button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:2px;}
-      @media(max-width:350px){ .filters {grid-template-columns:1fr;} }
-    `;
-    root.append(style);
-    const card = this._el('ha-card');
-    root.append(card);
-    const items = this._items();
-    const today = this._dateKey(new Date());
-    const todayCount = items.filter(item => {const date=this._parseDate(item.date);return date && this._dateKey(date)===today;}).length;
-    const header = this._el('button', 'header');
-    header.type = 'button';
-    header.setAttribute('aria-expanded', String(this._expanded));
-    const headingBox = this._el('div');
-    headingBox.append(this._el('div', 'heading', this._config.title));
-    let sub;
-    if (this._status === 'loading') sub = 'Lade Nachrichten …';
-    else if (this._status === 'error') sub = 'Nachrichtenquelle nicht erreichbar';
-    else sub = `${todayCount} ${todayCount === 1 ? 'Meldung' : 'Meldungen'} heute · ${items.length} geladen${this._status === 'stale' ? ' · Daten möglicherweise veraltet' : ''}`;
-    headingBox.append(this._el('div','sub',sub));
-    header.append(headingBox, this._el('span','arrow', this._expanded ? '▴' : '▾'));
-    header.addEventListener('click', () => { this._expanded = !this._expanded; this._render(); });
-    card.append(header);
-    if (!this._expanded) return;
-    const body = this._el('div','body');
-    card.append(body);
-    if (this._status === 'error' || this._status === 'loading') {
-      body.append(this._el('div','notice',this._status === 'loading' ? 'Pressemitteilungen werden geladen …' : this._error));
-      return;
+  function createElement(tag, className, value) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (value !== undefined && value !== null) element.textContent = String(value);
+    return element;
+  }
+
+  const styles = `
+    :host { display:block; color:var(--primary-text-color); }
+    ha-card { display:block; overflow:hidden; }
+    .header {width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;font:inherit;box-sizing:border-box;}
+    .heading {font-size:16px;font-weight:650;line-height:1.35;}
+    .sub {font-size:12px;color:var(--secondary-text-color);margin-top:4px;}
+    .arrow {font-size:18px;color:var(--secondary-text-color);flex-shrink:0;}
+    .body {padding:0 18px 12px;}
+    .filters {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px;}
+    select,input {width:100%;box-sizing:border-box;min-width:0;background:var(--card-background-color, var(--ha-card-background, #fff));color:var(--primary-text-color);border:1px solid var(--divider-color,#ddd);border-radius:8px;padding:9px;font:inherit;font-size:13px;}
+    input {grid-column:1 / -1;}
+    .entry {padding:12px 0;border-top:1px solid var(--divider-color,#ddd);}
+    .entry a {color:var(--primary-text-color);font-size:14px;font-weight:600;text-decoration:none;line-height:1.4;}
+    .entry a:hover {color:var(--primary-color);text-decoration:underline;}
+    .meta {color:var(--secondary-text-color);font-size:11px;margin:5px 0 4px;}
+    .notice {font-size:13px;color:var(--secondary-text-color);padding:12px 0;}
+    .footer {font-size:11px;color:var(--secondary-text-color);padding:10px 0 0;border-top:1px solid var(--divider-color,#ddd);}
+    button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--primary-color);outline-offset:2px;}
+    @media(max-width:350px){ .filters {grid-template-columns:1fr;} }
+  `;
+
+  class SchwerinNewsCard extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this._expanded = false;
+      this._period = 'Alle';
+      this._category = 'Alle Themen';
+      this._search = '';
+      this._news = [];
+      this._status = 'loading';
+      this._error = '';
+      this._timer = null;
+      this._requestId = 0;
+      this._source = '';
     }
-    if (this._status === 'stale') body.append(this._el('div','notice',this._error));
-    const filters = this._el('div','filters');
-    body.append(filters);
-    const period = this._el('select');
-    period.setAttribute('aria-label','Zeitraum');
-    for (const text of ['Alle','Heute','Letzte 7 Tage','Letzte 30 Tage']) {
-      const option=this._el('option', '', text);option.value=text;period.append(option);
-    }
-    period.value=this._period;
-    period.addEventListener('change',e=>{this._period=e.target.value;this._render();});
-    filters.append(period);
-    const category = this._el('select');
-    category.setAttribute('aria-label','Thema');
-    const categories=['Alle Themen','Verkehr','Bildung','Politik & Verwaltung','Kultur & Veranstaltungen','Bauen & Stadtentwicklung','Sonstiges'];
-    for (const text of categories){const option=this._el('option','',text);option.value=text;category.append(option);}
-    category.value=this._category;
-    category.addEventListener('change',e=>{this._category=e.target.value;this._render();});
-    filters.append(category);
-    const search=this._el('input');search.type='search';search.placeholder='Stichwort suchen …';search.setAttribute('aria-label','Stichwort suchen');search.value=this._search;
-    search.addEventListener('input',e=>{this._search=e.target.value;this._renderEntries(list,footer);});
-    filters.append(search);
-    const list=this._el('div');body.append(list);
-    const footer=this._el('div','footer');body.append(footer);
-    this._renderEntries(list,footer);
-  }
 
-  _renderEntries(list,footer) {
-    list.replaceChildren();
-    const now = new Date();
-    const start = new Date(now.getFullYear(),now.getMonth(),now.getDate());
-    if (this._period==='Letzte 7 Tage') start.setDate(start.getDate()-6);
-    if (this._period==='Letzte 30 Tage') start.setDate(start.getDate()-29);
-    const today = this._dateKey(now);
-    const needle=this._search.trim().toLocaleLowerCase('de');
-    const filtered=this._items().filter(item=>{
-      const date=this._parseDate(item.date);
-      if (this._period==='Heute' && (!date || this._dateKey(date)!==today)) return false;
-      if (this._period!=='Alle' && this._period!=='Heute' && (!date || date < start || date > now)) return false;
-      if (this._category!=='Alle Themen' && this._topic(item)!==this._category) return false;
-      return `${item.title||''}`.toLocaleLowerCase('de').includes(needle);
-    }).sort((a,b)=>(this._parseDate(b.date)?.getTime()||0)-(this._parseDate(a.date)?.getTime()||0));
-    const max=Math.max(1,Math.min(50,Number(this._config.max_items)||10));
-    if (!filtered.length) list.append(this._el('div','notice','Keine passenden Meldungen gefunden.'));
-    for (const item of filtered.slice(0,max)) {
-      const entry=this._el('article','entry');
-      const title=this._el('a','',item.title || 'Pressemitteilung');
+    setConfig(config) {
+      this._config = { ...DEFAULT_CONFIG, ...config };
+      this._expanded = Boolean(this._config.default_open);
+      this._news = [];
+      this._status = 'loading';
+      this._error = '';
+      this._render();
+      if (this.isConnected) this._start();
+    }
+
+    set hass(value) {
+      this._hass = value;
+    }
+
+    connectedCallback() {
+      if (this._config) this._start();
+    }
+
+    disconnectedCallback() {
+      if (this._timer) clearInterval(this._timer);
+      this._timer = null;
+      this._requestId += 1;
+    }
+
+    getCardSize() {
+      return this._expanded ? 7 : 2;
+    }
+
+    getGridOptions() {
+      return { columns: 12, min_columns: 4, rows: this._expanded ? 7 : 2, min_rows: 2 };
+    }
+
+    _start() {
+      if (this._timer) clearInterval(this._timer);
+      this._load();
+      const minutes = Math.max(5, Number(this._config.refresh_minutes) || DEFAULT_CONFIG.refresh_minutes);
+      this._timer = setInterval(() => this._load(), minutes * 60000);
+    }
+
+    async _load() {
+      const id = ++this._requestId;
+      try {
+        const result = await loadNews(this._config);
+        if (id !== this._requestId || !this.isConnected) return;
+        this._news = result.news;
+        this._source = result.source;
+        this._status = 'ok';
+        this._error = '';
+      } catch (error) {
+        if (id !== this._requestId || !this.isConnected) return;
+        this._status = this._news.length ? 'stale' : 'error';
+        this._error = `${String(error?.message || error)} — Wenn der Browserabruf HTTP 200 liefert, bitte die HTML-Struktur prüfen.`;
+      }
+      this._render();
+    }
+
+    _render() {
+      if (!this._config) return;
+
+      const root = this.shadowRoot;
+      root.replaceChildren();
+      root.append(createElement('style', '', styles));
+
+      const card = createElement('ha-card');
+      root.append(card);
+      const todayCount = this._news.filter((item) => {
+        const date = parseDate(item.date);
+        return date && dateKey(date) === dateKey(new Date());
+      }).length;
+
+      card.append(this._renderHeader(todayCount));
+      if (!this._expanded) return;
+      card.append(this._renderBody());
+    }
+
+    _renderHeader(todayCount) {
+      const header = createElement('button', 'header');
+      header.type = 'button';
+      header.setAttribute('aria-expanded', String(this._expanded));
+
+      const headingBox = createElement('div');
+      headingBox.append(createElement('div', 'heading', this._config.title));
+
+      let subtitle;
+      if (this._status === 'loading') subtitle = 'Lade Nachrichten ...';
+      else if (this._status === 'error') subtitle = 'Nachrichtenquelle nicht erreichbar';
+      else {
+        const label = todayCount === 1 ? 'Meldung' : 'Meldungen';
+        subtitle = `${todayCount} ${label} heute · ${this._news.length} geladen${this._status === 'stale' ? ' · Daten möglicherweise veraltet' : ''}`;
+      }
+
+      headingBox.append(createElement('div', 'sub', subtitle));
+      header.append(headingBox, createElement('span', 'arrow', this._expanded ? '▴' : '▾'));
+      header.addEventListener('click', () => {
+        this._expanded = !this._expanded;
+        this._render();
+      });
+      return header;
+    }
+
+    _renderBody() {
+      const body = createElement('div', 'body');
+
+      if (this._status === 'error' || this._status === 'loading') {
+        body.append(createElement('div', 'notice', this._status === 'loading' ? 'Pressemitteilungen werden geladen ...' : this._error));
+        return body;
+      }
+
+      if (this._status === 'stale') body.append(createElement('div', 'notice', this._error));
+
+      const filters = createElement('div', 'filters');
+      body.append(filters);
+
+      filters.append(this._renderSelect('Zeitraum', PERIODS, this._period, (value) => {
+        this._period = value;
+        this._render();
+      }));
+      filters.append(this._renderSelect('Thema', TOPICS, this._category, (value) => {
+        this._category = value;
+        this._render();
+      }));
+      filters.append(this._renderSearchInput());
+
+      const list = createElement('div');
+      const footer = createElement('div', 'footer');
+      body.append(list, footer);
+      this._renderEntries(list, footer);
+      return body;
+    }
+
+    _renderSelect(label, options, value, onChange) {
+      const select = createElement('select');
+      select.setAttribute('aria-label', label);
+      for (const text of options) {
+        const option = createElement('option', '', text);
+        option.value = text;
+        select.append(option);
+      }
+      select.value = value;
+      select.addEventListener('change', (event) => onChange(event.target.value));
+      return select;
+    }
+
+    _renderSearchInput() {
+      const search = createElement('input');
+      search.type = 'search';
+      search.placeholder = 'Stichwort suchen ...';
+      search.setAttribute('aria-label', 'Stichwort suchen');
+      search.value = this._search;
+      search.addEventListener('input', (event) => {
+        this._search = event.target.value;
+        this._render();
+      });
+      return search;
+    }
+
+    _renderEntries(list, footer) {
+      list.replaceChildren();
+      const max = clampMaxItems(this._config.max_items);
+      const filtered = filterNews(this._news, {
+        period: this._period,
+        category: this._category,
+        search: this._search,
+      });
+
+      if (!filtered.length) list.append(createElement('div', 'notice', 'Keine passenden Meldungen gefunden.'));
+
+      for (const item of filtered.slice(0, max)) {
+        list.append(this._renderEntry(item));
+      }
+
+      footer.textContent = `${Math.min(filtered.length, max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._news.length} aus ${this._source || 'Quelle'} geladen`;
+    }
+
+    _renderEntry(item) {
+      const entry = createElement('article', 'entry');
+      const title = createElement('a', '', item.title || 'Pressemitteilung');
       let url;
-      try {url=new URL(item.url, 'https://www.schwerin.de');} catch {url=null;}
-      if (url && ['https:', 'http:'].includes(url.protocol)) {
-        title.href=url.href;title.target='_blank';title.rel='noopener noreferrer';
-      } else { title.removeAttribute('href'); }
+      try {
+        url = new URL(item.url, 'https://www.schwerin.de');
+      } catch {
+        url = null;
+      }
+
+      if (url && url.protocol === 'https:' && PUBLIC_HOST_PATTERN.test(url.hostname)) {
+        title.href = url.href;
+        title.target = '_blank';
+        title.rel = 'noopener noreferrer';
+      }
+
       entry.append(title);
-      entry.append(this._el('div','meta',`${this._displayDate(item.date)} · ${this._topic(item)}`));
-      list.append(entry);
+      entry.append(createElement('div', 'meta', `${formatDisplayDate(item.date)} · ${topicForItem(item)}`));
+      return entry;
     }
-    footer.textContent=`${Math.min(filtered.length,max)} von ${filtered.length} passenden Meldungen angezeigt · ${this._items().length} aus ${this._source || "Quelle"} geladen`;
   }
-}
-if (!customElements.get('schwerin-news-card')) customElements.define('schwerin-news-card', SchwerinNewsCard);
-window.customCards = window.customCards || [];
-if (!window.customCards.some(c=>c.type==='schwerin-news-card')) window.customCards.push({type:'schwerin-news-card',name:'Schwerin Pressemitteilungen',description:'Klappbare Nachrichtenkarte mit Tageszähler, Themen- und Textfilter',preview:false});
+
+  const api = {
+    DEFAULT_CONFIG,
+    TOPICS,
+    PERIODS,
+    clampMaxItems,
+    dateKey,
+    filterNews,
+    findFeedUrl,
+    formatDisplayDate,
+    loadNews,
+    normalizeArticleUrl,
+    normalizeWhitespace,
+    parseDate,
+    parseFeedNews,
+    parseHtmlNews,
+    topicForItem,
+  };
+
+  global.SchwerinNewsCardHelpers = api;
+
+  if (global.customElements && !global.customElements.get('schwerin-news-card')) {
+    global.customElements.define('schwerin-news-card', SchwerinNewsCard);
+  }
+
+  global.customCards = global.customCards || [];
+  if (!global.customCards.some((card) => card.type === 'schwerin-news-card')) {
+    global.customCards.push({
+      type: 'schwerin-news-card',
+      name: 'Schwerin Pressemitteilungen',
+      description: 'Klappbare Nachrichtenkarte mit Tageszähler, Themen- und Textfilter',
+      preview: false,
+    });
+  }
+})(typeof window !== 'undefined' ? window : globalThis);
